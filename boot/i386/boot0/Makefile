@@ -15,8 +15,9 @@ SRCS=	${PROG}.S
 #	-DCHECK_DRIVE	enable checking drive number
 #	-DONLY_F_KEYS	accept only Fx keys in console
 #	-DTEST		print drive number on entry
+#       -DQUIET         don't show anything on screen unless Ctrl key is pressed
 #
-OPTS ?= -DVOLUME_SERIAL -DPXE
+OPTS ?= -DVOLUME_SERIAL -DPXE -DQUIET
 CFLAGS += ${OPTS}
 
 # Flags used in the boot0.S code:
