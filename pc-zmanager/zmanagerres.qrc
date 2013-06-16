@@ -1,0 +1,11 @@
+<RCC>
+    <qresource prefix="/">
+        <file>icons/server-database.png</file>
+        <file>icons/task-complete.png</file>
+        <file>icons/task-attention.png</file>
+        <file>icons/drive-harddisk.png</file>
+        <file>icons/task-reject.png</file>
+        <file>icons/partitionmanager.png</file>
+        <file>icons/kdf.png</file>
+    </qresource>
+</RCC>
