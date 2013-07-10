@@ -10,6 +10,9 @@ namespace Ui {
 class DialogPartition;
 }
 
+
+
+
 class DialogPartition : public QDialog
 {
     friend class ZManagerWindow;
@@ -17,8 +20,6 @@ class DialogPartition : public QDialog
     vdev_t *device;
     int granularity;
 public:
-    QString printBytes(unsigned long long bytes, int unit=-1);
-    int printUnits(unsigned long long bytes);
 
     explicit DialogPartition(QWidget *parent = 0);
     ~DialogPartition();

@@ -22,15 +22,24 @@ LANGUAGE	= C++
 SOURCES += main.cpp\
         zmanagerwindow.cpp \
     dialogpartition.cpp \
-    dialogmount.cpp
+    dialogmount.cpp \
+    dialognewpool.cpp \
+    dialogname.cpp \
+    dialogprop.cpp
 
 HEADERS  += zmanagerwindow.h \
     dialogpartition.h \
-    dialogmount.h
+    dialogmount.h \
+    dialognewpool.h \
+    dialogname.h \
+    dialogprop.h
 
 FORMS    += zmanagerwindow.ui \
     dialogpartition.ui \
-    dialogmount.ui
+    dialogmount.ui \
+    dialognewpool.ui \
+    dialogname.ui \
+    dialogprop.ui
 # DEBUG ONLY, IT SHOULD BE ONLY ../libpcbsd
 LIBS	+= -L../../pcbsd/src-qt4/libpcbsd -lQtSolutions_SingleApplication-head -lpcbsd-utils
 

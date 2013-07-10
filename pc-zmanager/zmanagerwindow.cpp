@@ -3,6 +3,9 @@
 #include "ui_zmanagerwindow.h"
 #include "dialogpartition.h"
 #include "dialogmount.h"
+#include "dialognewpool.h"
+#include "dialogname.h"
+#include "dialogprop.h"
 #include <pcbsd-utils.h>
 #include <QDebug>
 #include <QIcon>
@@ -16,6 +19,10 @@ ZManagerWindow::ZManagerWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::ZManagerWindow)
 {
+
+    lastSelectedPool=NULL;
+    lastSelectedVdev=NULL;
+
     ui->setupUi(this);
 
     ui->zpoolList->setIconSize(QSize(48,48));
@@ -30,6 +37,8 @@ ZManagerWindow::ZManagerWindow(QWidget *parent) :
 
     connect(ui->zpoolList,SIGNAL(customContextMenuRequested(QPoint)),SLOT(zpoolContextMenu(QPoint)));
     connect(ui->deviceList,SIGNAL(customContextMenuRequested(QPoint)),SLOT(deviceContextMenu(QPoint)));
+
+    ui->frameStatus->setVisible(false);
 
 }
 
@@ -56,17 +65,20 @@ void ZManagerWindow::GetCurrentTopology()
 
     // RUN ALL REQUIRED PROCESSES AND GET THE RESULTS
 
-    QStringList a=pcbsd::Utils::runShellCommand("zpool status");
+    QStringList a=pcbsd::Utils::runShellCommand("zpool status");    // GET ALL ACTIVE POOLS
+    QStringList i=pcbsd::Utils::runShellCommand("zpool import");    // GET ALL EXPORTED POOLS AVAILABLE
+    QStringList d=pcbsd::Utils::runShellCommand("zpool import -D");    // GET ALL DESTROYED POOLS READY TO RECOVER
     QStringList g=pcbsd::Utils::runShellCommand("geom disk list");
     QStringList h=pcbsd::Utils::runShellCommand("gpart list");
     QStringList h2=pcbsd::Utils::runShellCommand("gpart show -p");
     QStringList lbl=pcbsd::Utils::runShellCommand("glabel status");
     QStringList m=pcbsd::Utils::runShellCommand("mount");
-
+    QStringList prop;   // GET PROPERTIES FOR ALL POOLS ONCE WE HAVE A LIST OF POOLS
 
     // CLEAR ALL EXISTING TOPOLOGY
     this->Pools.clear();
     this->Disks.clear();
+    this->Errors.clear();
 
     QStringList::const_iterator idx;
     int state;
@@ -412,6 +424,7 @@ void ZManagerWindow::GetCurrentTopology()
     while(idx!=lbl.constEnd()) {
         QStringList tokens=(*idx).split(" ", QString::SkipEmptyParts);
 
+        if(tokens.count()>=2) {
         QList<vdev_t>::iterator dskit=this->Disks.begin();
 
         while(dskit!=this->Disks.end())
@@ -433,6 +446,7 @@ void ZManagerWindow::GetCurrentTopology()
             if(tokens.at(2)==(*dskit).Name) { (*dskit).Alias=tokens.at(0); break; }
 
             ++dskit;
+        }
         }
 
         ++idx;
@@ -493,6 +507,8 @@ void ZManagerWindow::GetCurrentTopology()
 
     idx=a.constBegin();
     zpool_t pool;
+    zerror_t err;
+
     state=0;
 
     while(idx!=a.constEnd()) {
@@ -511,6 +527,7 @@ void ZManagerWindow::GetCurrentTopology()
             pool.Free=0;
             pool.Status=0;
             pool.VDevs.clear();
+            pool.Type.clear();
             ++state;
         }
 
@@ -518,26 +535,93 @@ void ZManagerWindow::GetCurrentTopology()
             QString tmp=*idx;
             tmp=tmp.remove(0,8);
             pool.Status=STATE_UNKNOWN;
-            if(tmp=="ONLINE") pool.Status=STATE_ONLINE;
-            if(tmp=="OFFLINE") pool.Status=STATE_OFFLINE;
-            if(tmp=="DEGRADED") pool.Status=STATE_DEGRADED;
-            if(tmp=="FAULTED") pool.Status=STATE_FAULTED;
-            if(tmp=="REMOVED") pool.Status=STATE_REMOVED;
-            if(tmp=="UNAVAIL") pool.Status=STATE_UNAVAIL;
+            if(tmp.startsWith("ONLINE")) pool.Status=STATE_ONLINE;
+            if(tmp.startsWith("OFFLINE")) pool.Status=STATE_OFFLINE;
+            if(tmp.startsWith("DEGRADED")) pool.Status=STATE_DEGRADED;
+            if(tmp.startsWith("FAULTED")) pool.Status=STATE_FAULTED;
+            if(tmp.startsWith("REMOVED")) pool.Status=STATE_REMOVED;
+            if(tmp.startsWith("UNAVAIL")) pool.Status=STATE_UNAVAIL;
             ++state;
         }
 
-        if(str.startsWith(QString("\t")+pool.Name) && (state==2)) {
-        // START DETAILED LIST OF THE POOL
+        if(str.startsWith("status: ")&& (state==2)) {
+            QString tmp=*idx;
+            tmp.remove(0,8);
+            err.PoolName=pool.Name;
+            err.Error=tmp;
             ++state;
         }
-        if(str.startsWith("\t  ")&& (state==3)) {
+        else {
+        if(state==3) {
+            if(str.startsWith(QString("\t"))) {
+                // ERROR MESSAGE CONTINUES
+                QString tmp=*idx;
+                tmp.remove(0,1);
+                err.Error+=" "+tmp;
+            }
+            else {
+                // ERROR MESSAGE FINISHED
+                this->Errors.append(err);
+                ++state;
+            }
+        }
+        }
+
+
+
+        if(str.startsWith(QString("\t")+pool.Name) && ((state==2)||(state==4)) ) {
+        // START DETAILED LIST OF THE POOL
+            state=5;
+        }
+
+        if(str.startsWith("\tlogs") && (state==5)) {
+            vdev_t vdev;
+
+            vdev.Name=vdev.PartType="logs";
+            vdev.Level=0;
+            vdev.Status=STATE_NOTAPPLICABLE;
+            vdev.InPool=pool.Name;
+            pool.VDevs.append(vdev);
+
+        }
+
+        if(str.startsWith("\tspares") && (state==5)) {
+            vdev_t vdev;
+
+            vdev.Name=vdev.PartType="spares";
+            vdev.Level=0;
+            vdev.Status=STATE_NOTAPPLICABLE;
+            vdev.InPool=pool.Name;
+            pool.VDevs.append(vdev);
+
+        }
+
+        if(str.startsWith("\tcache") && (state==5)) {
+            vdev_t vdev;
+
+            vdev.Name=vdev.PartType="cache";
+            vdev.Level=0;
+            vdev.Status=STATE_NOTAPPLICABLE;
+            vdev.InPool=pool.Name;
+            pool.VDevs.append(vdev);
+
+        }
+
+
+        if(str.startsWith("\t  ")&& (state==5)) {
             QString tmp=*idx;
             int level=0;
             tmp=tmp.remove(0,3);
             if(tmp.startsWith("  ")) {
                 // THIS IS A DISK INSIDE A MIRROR/RAID, ETC.
                 ++level;
+            }
+            else {
+                if( (pool.VDevs.count()>0) && ((pool.VDevs.last().PartType=="logs")||(pool.VDevs.last().PartType=="cache")||(pool.VDevs.last().PartType=="spares")))
+                {
+                    // THIS DEVICE IS PART OF A SPECIAL GROUP
+                    ++level;
+                }
             }
             QStringList tokens=tmp.split(" ",QString::SkipEmptyParts);
 
@@ -550,11 +634,13 @@ void ZManagerWindow::GetCurrentTopology()
 
                 vdev.Name=tok;
                 vdev.Level=level;
+                vdev.Status=STATE_UNKNOWN;
                 ++it;
+                if(it!=tokens.constEnd()) {
+
 
                 QString tmp=*it;
 
-                vdev.Status=STATE_UNKNOWN;
 
                 if(tmp=="ONLINE") vdev.Status=STATE_ONLINE;
                 if(tmp=="OFFLINE") vdev.Status=STATE_OFFLINE;
@@ -562,6 +648,9 @@ void ZManagerWindow::GetCurrentTopology()
                 if(tmp=="FAULTED") vdev.Status=STATE_FAULTED;
                 if(tmp=="REMOVED") vdev.Status=STATE_REMOVED;
                 if(tmp=="UNAVAIL") vdev.Status=STATE_UNAVAIL;
+                if(tmp=="AVAIL") vdev.Status=STATE_AVAIL;
+
+                }
 
                 if(vdev.Status==STATE_UNKNOWN) vdev.Name.clear();
 
@@ -569,8 +658,12 @@ void ZManagerWindow::GetCurrentTopology()
 
                 if(vdev.Name.startsWith("mirror")) vdev.PartType="mirror";
                 if(vdev.Name.startsWith("raidz3")) vdev.PartType="raidz3";
+                else {
                 if(vdev.Name.startsWith("raidz2")) vdev.PartType="raidz2";
-                if(vdev.Name.startsWith("raidz-")) vdev.PartType="raidz";
+                else {
+                if(vdev.Name.startsWith("raidz")) vdev.PartType="raidz";
+                }
+                }
 
                 vdev.Partitions.clear();
 
@@ -592,7 +685,221 @@ void ZManagerWindow::GetCurrentTopology()
             }
         }
 
-        if(str.startsWith("errors: ")&& (state==3)) ++state;
+        if(str.startsWith("errors: ")&& (state==5)) ++state;
+
+
+        idx++;
+    }
+    if(state) {
+        // PREVIOUS POOL FINISHED, STORE
+        this->Pools.append(pool);
+        state=0;
+    }
+
+    // NOW THAT WE HAVE A LIST OF POOLS, GET PROPERTIES FOR ALL ACTIVE ZPOOLS
+
+    QString cmdline="zpool get all";
+    zpool_t n;
+
+    foreach(n,Pools) {
+        cmdline+= " \""+n.Name+"\"";
+    }
+
+    prop=pcbsd::Utils::runShellCommand(cmdline);
+
+
+
+
+
+
+    // PROCESS THE EXPORTED POOL LIST
+
+    idx=i.constBegin();
+
+    state=0;
+
+    while(idx!=i.constEnd()) {
+
+        QString str=*idx;
+
+        if(str.startsWith("   pool: ")) {
+
+            if(state) {
+                // PREVIOUS POOL FINISHED, STORE
+                this->Pools.append(pool);
+                state=0;
+            }
+            pool.Name=str.remove(0,9);
+            pool.Size=0;
+            pool.Free=0;
+            pool.Status=0;
+            pool.VDevs.clear();
+            pool.Type.clear();
+            ++state;
+        }
+
+        if(str.startsWith("     id: ")&& (state==1)) {
+            QString tmp=*idx;
+            tmp=tmp.remove(0,9);
+            pool.Type=tmp;
+        }
+
+
+        if(str.startsWith("  state: ")&& (state==1)) {
+            QString tmp=*idx;
+            tmp=tmp.remove(0,9);
+            pool.Status=STATE_UNKNOWN;
+            if(tmp.startsWith("ONLINE")) pool.Status=STATE_ONLINE;
+            if(tmp.startsWith("OFFLINE")) pool.Status=STATE_OFFLINE;
+            if(tmp.startsWith("DEGRADED")) pool.Status=STATE_DEGRADED;
+            if(tmp.startsWith("FAULTED")) pool.Status=STATE_FAULTED;
+            if(tmp.startsWith("REMOVED")) pool.Status=STATE_REMOVED;
+            if(tmp.startsWith("UNAVAIL")) pool.Status=STATE_UNAVAIL;
+            pool.Status|=STATE_EXPORTED;
+            ++state;
+        }
+
+        /*
+        if(str.startsWith(" status: ")&& (state==2)) {
+            QString tmp=*idx;
+            tmp.remove(0,9);
+            err.PoolName=pool.Name;
+            err.Error=tmp;
+            ++state;
+        }
+        else {
+        if(state==3) {
+            if(str.startsWith(QString("\t"))) {
+                // ERROR MESSAGE CONTINUES
+                QString tmp=*idx;
+                tmp.remove(0,1);
+                err.Error+=" "+tmp;
+            }
+            else {
+                // ERROR MESSAGE FINISHED
+                this->Errors.append(err);
+                ++state;
+            }
+        }
+        }
+        */
+
+
+        if(str.startsWith(QString("\t")+pool.Name) && ((state==2)||(state==4)) ) {
+        // START DETAILED LIST OF THE POOL
+            state=5;
+        }
+
+        if(str.startsWith("\tlogs") && (state==5)) {
+            vdev_t vdev;
+
+            vdev.Name=vdev.PartType="logs";
+            vdev.Level=0;
+            vdev.Status=STATE_NOTAPPLICABLE;
+            vdev.InPool=pool.Name;
+            pool.VDevs.append(vdev);
+
+        }
+
+        if(str.startsWith("\tspares") && (state==5)) {
+            vdev_t vdev;
+
+            vdev.Name=vdev.PartType="spares";
+            vdev.Level=0;
+            vdev.Status=STATE_NOTAPPLICABLE;
+            vdev.InPool=pool.Name;
+            pool.VDevs.append(vdev);
+
+        }
+
+        if(str.startsWith("\tcache") && (state==5)) {
+            vdev_t vdev;
+
+            vdev.Name=vdev.PartType="cache";
+            vdev.Level=0;
+            vdev.Status=STATE_NOTAPPLICABLE;
+            vdev.InPool=pool.Name;
+            pool.VDevs.append(vdev);
+
+        }
+
+
+        if(str.startsWith("\t  ")&& (state==5)) {
+            QString tmp=*idx;
+            int level=0;
+            tmp=tmp.remove(0,3);
+            if(tmp.startsWith("  ")) {
+                // THIS IS A DISK INSIDE A MIRROR/RAID, ETC.
+                ++level;
+            }
+            else {
+                if( (pool.VDevs.count()>0) && ((pool.VDevs.last().PartType=="logs")||(pool.VDevs.last().PartType=="cache")||(pool.VDevs.last().PartType=="spares")))
+                {
+                    // THIS DEVICE IS PART OF A SPECIAL GROUP
+                    ++level;
+                }
+            }
+            QStringList tokens=tmp.split(" ",QString::SkipEmptyParts);
+
+            QStringList::const_iterator it=tokens.constBegin();
+            vdev_t vdev;
+
+            if(tokens.count()>0)
+            {
+                QString tok=*it;
+
+                vdev.Name=tok;
+                vdev.Level=level;
+                vdev.Status=STATE_UNKNOWN;
+                ++it;
+                if(it!=tokens.constEnd()) {
+
+                QString tmp=*it;
+
+
+                if(tmp=="ONLINE") vdev.Status=STATE_ONLINE;
+                if(tmp=="OFFLINE") vdev.Status=STATE_OFFLINE;
+                if(tmp=="DEGRADED") vdev.Status=STATE_DEGRADED;
+                if(tmp=="FAULTED") vdev.Status=STATE_FAULTED;
+                if(tmp=="REMOVED") vdev.Status=STATE_REMOVED;
+                if(tmp=="UNAVAIL") vdev.Status=STATE_UNAVAIL;
+                if(tmp=="AVAIL") vdev.Status=STATE_AVAIL;
+                }
+
+                if(vdev.Status==STATE_UNKNOWN) vdev.Name.clear();
+
+                // CHECK IF VDEV IS A MIRROR OR RAID ARRAY
+
+                if(vdev.Name.startsWith("mirror")) vdev.PartType="mirror";
+                if(vdev.Name.startsWith("raidz3")) vdev.PartType="raidz3";
+                else {
+                if(vdev.Name.startsWith("raidz2")) vdev.PartType="raidz2";
+                else {
+                if(vdev.Name.startsWith("raidz")) vdev.PartType="raidz";
+                }
+                }
+
+                vdev.Partitions.clear();
+
+
+            }
+            if(!vdev.Name.isEmpty()) {
+                vdev.InPool=pool.Name;
+                if(vdev.Level) pool.VDevs.last().Partitions.append(vdev);
+                else pool.VDevs.append(vdev);
+
+                vdev_t *dsk=getDiskbyName(vdev.Name);
+                if(dsk!=NULL) dsk->InPool = pool.Name;
+                //if(dsk!=NULL && level==0) {
+                 // THE POOL IS STRIPED ONLY
+                //    pool.Type="striped";
+                //}
+                //if(pool.Type.isEmpty() && !vdev.PartType.isEmpty()) pool.Type=vdev.PartType;
+
+            }
+        }
+
+        if(str.startsWith("errors: ")&& (state==5)) ++state;
 
 
         idx++;
@@ -605,13 +912,229 @@ void ZManagerWindow::GetCurrentTopology()
 
 
 
+    // PROCESS THE DESTROYED POOL LIST
+
+    idx=d.constBegin();
+
+    state=0;
+
+    while(idx!=d.constEnd()) {
+
+        QString str=*idx;
+
+        if(str.startsWith("   pool: ")) {
+
+            if(state) {
+                // PREVIOUS POOL FINISHED, STORE
+                if(pool.Status!=(STATE_FAULTED|STATE_DESTROYED)) {
+                    // IF POOL IS DAMAGED, CANNOT BE RECOVERED. DON'T SHOW IN THE LIST
+                this->Pools.append(pool);
+                }
+                state=0;
+
+            }
+            pool.Name=str.remove(0,9);
+            pool.Size=0;
+            pool.Free=0;
+            pool.Status=0;
+            pool.VDevs.clear();
+            pool.Type.clear();
+            ++state;
+        }
+
+        if(str.startsWith("     id: ")&& (state==1)) {
+            QString tmp=*idx;
+            tmp=tmp.remove(0,9);
+            pool.Type=tmp;
+        }
+
+
+        if(str.startsWith("  state: ")&& (state==1)) {
+            QString tmp=*idx;
+            tmp=tmp.remove(0,9);
+            pool.Status=STATE_UNKNOWN;
+            if(tmp.startsWith("ONLINE")) pool.Status=STATE_ONLINE;
+            if(tmp.startsWith("OFFLINE")) pool.Status=STATE_OFFLINE;
+            if(tmp.startsWith("DEGRADED")) pool.Status=STATE_DEGRADED;
+            if(tmp.startsWith("FAULTED")) pool.Status=STATE_FAULTED;
+            if(tmp.startsWith("REMOVED")) pool.Status=STATE_REMOVED;
+            if(tmp.startsWith("UNAVAIL")) pool.Status=STATE_UNAVAIL;
+            pool.Status|=STATE_DESTROYED;
+            ++state;
+        }
 
 
 
 
+        if(str.startsWith(QString("\t")+pool.Name) && ((state==2)||(state==4)) ) {
+        // START DETAILED LIST OF THE POOL
+            state=5;
+        }
+
+        if(str.startsWith("\tlogs") && (state==5)) {
+            vdev_t vdev;
+
+            vdev.Name=vdev.PartType="logs";
+            vdev.Level=0;
+            vdev.Status=STATE_NOTAPPLICABLE;
+            //vdev.InPool=pool.Name;
+            pool.VDevs.append(vdev);
+
+        }
+
+        if(str.startsWith("\tspares") && (state==5)) {
+            vdev_t vdev;
+
+            vdev.Name=vdev.PartType="spares";
+            vdev.Level=0;
+            vdev.Status=STATE_NOTAPPLICABLE;
+            //vdev.InPool=pool.Name;
+            pool.VDevs.append(vdev);
+
+        }
+
+        if(str.startsWith("\tcache") && (state==5)) {
+            vdev_t vdev;
+
+            vdev.Name=vdev.PartType="cache";
+            vdev.Level=0;
+            vdev.Status=STATE_NOTAPPLICABLE;
+            //vdev.InPool=pool.Name;
+            pool.VDevs.append(vdev);
+
+        }
+
+
+        if(str.startsWith("\t  ")&& (state==5)) {
+            QString tmp=*idx;
+            int level=0;
+            tmp=tmp.remove(0,3);
+            if(tmp.startsWith("  ")) {
+                // THIS IS A DISK INSIDE A MIRROR/RAID, ETC.
+                ++level;
+            }
+            else {
+                if( (pool.VDevs.count()>0) && ((pool.VDevs.last().PartType=="logs")||(pool.VDevs.last().PartType=="cache")||(pool.VDevs.last().PartType=="spares")))
+                {
+                    // THIS DEVICE IS PART OF A SPECIAL GROUP
+                    ++level;
+                }
+            }
+            QStringList tokens=tmp.split(" ",QString::SkipEmptyParts);
+
+            QStringList::const_iterator it=tokens.constBegin();
+            vdev_t vdev;
+
+            if(tokens.count()>0)
+            {
+                QString tok=*it;
+
+                vdev.Name=tok;
+                vdev.Level=level;
+                vdev.Status=STATE_UNKNOWN;
+
+                ++it;
+                if(it!=tokens.constEnd()) {
+
+                QString tmp=*it;
+
+
+                if(tmp=="ONLINE") vdev.Status=STATE_ONLINE;
+                if(tmp=="OFFLINE") vdev.Status=STATE_OFFLINE;
+                if(tmp=="DEGRADED") vdev.Status=STATE_DEGRADED;
+                if(tmp=="FAULTED") vdev.Status=STATE_FAULTED;
+                if(tmp=="REMOVED") vdev.Status=STATE_REMOVED;
+                if(tmp=="UNAVAIL") vdev.Status=STATE_UNAVAIL;
+                if(tmp=="AVAIL") vdev.Status=STATE_AVAIL;
+
+                }
+                if(vdev.Status==STATE_UNKNOWN) vdev.Name.clear();
+
+                // CHECK IF VDEV IS A MIRROR OR RAID ARRAY
+
+                if(vdev.Name.startsWith("mirror")) vdev.PartType="mirror";
+                if(vdev.Name.startsWith("raidz3")) vdev.PartType="raidz3";
+                else {
+                if(vdev.Name.startsWith("raidz2")) vdev.PartType="raidz2";
+                else {
+                if(vdev.Name.startsWith("raidz")) vdev.PartType="raidz";
+                }
+                }
+
+                vdev.Partitions.clear();
+
+
+            }
+            if(!vdev.Name.isEmpty()) {
+                //vdev.InPool=pool.Name;
+                if(vdev.Level) pool.VDevs.last().Partitions.append(vdev);
+                else pool.VDevs.append(vdev);
+
+                //vdev_t *dsk=getDiskbyName(vdev.Name);
+                //if(dsk!=NULL) dsk->InPool = pool.Name;
+                //if(dsk!=NULL && level==0) {
+                 // THE POOL IS STRIPED ONLY
+                //    pool.Type="striped";
+                //}
+                //if(pool.Type.isEmpty() && !vdev.PartType.isEmpty()) pool.Type=vdev.PartType;
+
+            }
+        }
+
+        if(str.startsWith("errors: ")&& (state==5)) ++state;
+
+
+        idx++;
+    }
+    if(state) {
+        // PREVIOUS POOL FINISHED, STORE
+        if(pool.Status!=(STATE_FAULTED|STATE_DESTROYED)) {
+            // IF POOL IS DAMAGED, CANNOT BE RECOVERED. DON'T SHOW IN THE LIST
+        this->Pools.append(pool);
+        state=0;
+        }
+    }
+
+
+// EXTRACT PROPERTIES
+
+QStringList::const_iterator pit=prop.constBegin();
+
+while(pit!=prop.constEnd())
+{
+    // SEARCH THROUGH ALL CURRENT POOLS TO SEE IF NAMES MATCH
+    QList<zpool_t>::const_iterator poolit=Pools.constBegin();
+    QList<zprop_t> *proplist=NULL;
+    int matchinglength=0;
+    while(poolit!=Pools.constEnd())
+    {
+        if(!((*poolit).Status&(STATE_DESTROYED|STATE_EXPORTED)) )
+        {
+            // THE POOL IS ACTIVE
+            if((*pit).startsWith((*poolit).Name)) {
+                if(matchinglength<(*poolit).Name.length()) { proplist=(QList<zprop_t> *)&(*poolit).Properties; matchinglength=(*poolit).Name.length(); }
+            }
+        }
+
+     ++poolit;
+    }
+    if(proplist!=NULL)
+    {
+        QString tmpline=(*pit);
+        QStringList a=tmpline.remove(0,matchinglength).split(" ",QString::SkipEmptyParts);
+        if(a.count()>=2) {
+        zprop_t proptmp;
+        proptmp.Name=a[0];
+        proptmp.Value=a[1];
+
+        proplist->append(proptmp);
+        }
+    }
 
 
 
+    ++pit;
+}
 
 }
 
@@ -623,9 +1146,23 @@ void ZManagerWindow::refreshState()
     ui->zpoolList->clear();
     ui->deviceList->clear();
 
+
+    // SHOW ERRORS
+    if(Errors.count()>0) {
+
+        ui->statusLabel->setText(Errors.at(0).Error);
+        ui->poolLabel->setText(Errors.at(0).PoolName);
+        ui->frameStatus->setVisible(true);
+    }
+    else     ui->frameStatus->setVisible(false);
+
+
+
     // ADD ALL POOLS
 
     if(Pools.count()!=0) {
+
+    int itindex=0;
 
     QList<zpool_t>::iterator it=Pools.begin();
 
@@ -634,10 +1171,13 @@ void ZManagerWindow::refreshState()
     item->setText(0,(*it).Name);
     item->setIcon(0,QIcon(":/icons/server-database.png"));
     item->setText(1,getStatusString((*it).Status));
+    item->setData(0,Qt::UserRole,QVariant(itindex));
+    if((*it).Status&(STATE_DESTROYED|STATE_EXPORTED)) { item->setIcon(1,QIcon(":/icons/task-reject.png")); item->setDisabled(true); }
+    else {
     if((*it).Status==STATE_ONLINE) item->setIcon(1,QIcon(":/icons/task-complete.png"));
     else if( ((*it).Status==STATE_FAULTED)|| ((*it).Status==STATE_UNAVAIL)|| ((*it).Status==STATE_REMOVED)) item->setIcon(1,QIcon(":/icons/task-reject.png"));
         else item->setIcon(1,QIcon(":/icons/task-attention.png"));
-
+    }
 
     QList<vdev_t>::const_iterator devit=(*it).VDevs.constBegin();
 
@@ -649,14 +1189,41 @@ void ZManagerWindow::refreshState()
         subitem->setText(0,(*devit).Name);
         // TODO: USE APPROPRIATE ICONS FOR DISKS, SLICES, FILES, ETC.
         subitem->setIcon(0,QIcon(":/icons/drive-harddisk.png"));
+        subitem->setData(0,Qt::UserRole,QVariant(-1));
         subitem->setText(1,getStatusString((*devit).Status));
         if((*devit).Status==STATE_ONLINE) subitem->setIcon(1,QIcon(":/icons/task-complete.png"));
         else if( ((*devit).Status==STATE_FAULTED)|| ((*devit).Status==STATE_UNAVAIL)|| ((*devit).Status==STATE_REMOVED)) subitem->setIcon(1,QIcon(":/icons/task-reject.png"));
-            else subitem->setIcon(1,QIcon(":/icons/task-attention.png"));
+            else if((*devit).Status!=STATE_NOTAPPLICABLE) subitem->setIcon(1,QIcon(":/icons/task-attention.png"));
+
+        // ADD SUB-VDEVS IN CASE THIS IS A MIRROR OR RAIDZ VIRTUAL DEVICE
+
+        QList<vdev_t>::const_iterator level2it=(*devit).Partitions.constBegin();
+
+        while(level2it!=(*devit).Partitions.constEnd())
+        {
+            QTreeWidgetItem *subsubitem=new QTreeWidgetItem(subitem);
+
+            // TODO: ADD MORE DESCRIPTION HERE FROM THE GEOM INFO OF THE DEVICE
+            subsubitem->setText(0,(*level2it).Name);
+            // TODO: USE APPROPRIATE ICONS FOR DISKS, SLICES, FILES, ETC.
+            subsubitem->setIcon(0,QIcon(":/icons/drive-harddisk.png"));
+            subsubitem->setData(0,Qt::UserRole,QVariant(-1));
+            subsubitem->setText(1,getStatusString((*level2it).Status));
+            if((*level2it).Status==STATE_ONLINE || (*level2it).Status==STATE_AVAIL) subsubitem->setIcon(1,QIcon(":/icons/task-complete.png"));
+            else if( ((*level2it).Status==STATE_FAULTED)|| ((*level2it).Status==STATE_UNAVAIL)|| ((*level2it).Status==STATE_REMOVED)) subsubitem->setIcon(1,QIcon(":/icons/task-reject.png"));
+                else subsubitem->setIcon(1,QIcon(":/icons/task-attention.png"));
+
+
+            ++level2it;
+
+        }
+
+
         ++devit;
     }
 
     ++it;
+    ++itindex;
     }
 
     }
@@ -678,7 +1245,8 @@ void ZManagerWindow::refreshState()
         QTreeWidgetItem *item=new QTreeWidgetItem(ui->deviceList);
 
         QString sz;
-        sz.sprintf(" (%.1lf GB)",((double)(*idx).Size)/((double)(1024.0*1024.0*1024.0)));
+        if((*idx).Size!=0) sz=" ("+printBytes((*idx).Size)+")";
+        else sz=tr(" (No media in drive)");
         if(!(*idx).PartType.isEmpty()) { sz+=" [" + (*idx).PartType + "]"; }
         sz+="\n";
         item->setText(0,(*idx).Name + sz + (*idx).Description);
@@ -687,7 +1255,7 @@ void ZManagerWindow::refreshState()
             // IS NOT MOUNTED, CHECK IF IT HAS ANY PARTITIONS
             if((*idx).Partitions.count()==0) {
                 // NO PARTITIONS, IT'S EITHER UNUSED OR PART OF A POOL (DEDICATED)
-                if((*idx).InPool.isEmpty())  item->setText(1,tr("Avaliable"));
+                if((*idx).InPool.isEmpty())  { if((*idx).Size!=0) item->setText(1,tr("Avaliable")); else item->setText(1,tr("No disk")); }
                 else item->setText(1,tr("ZPool: ")+(*idx).InPool);
             } else item->setText(1,tr("Sliced")); }
         else item->setText(1,tr("Mounted: ")+(*idx).MountPoint);
@@ -703,10 +1271,16 @@ void ZManagerWindow::refreshState()
 
             QString sz;
 
-            sz.sprintf(" (%.1lf GB)\n",((double)(*partidx).Size)/((double)(1024.0*1024.0*1024.0)));
-            subitem->setText(0,(*partidx).Name + sz + (*partidx).PartType);
+            sz=" ("+printBytes((*partidx).Size)+")\n";
+            subitem->setText(0,(*partidx).Name + sz + " ["+(*partidx).PartType+"]");
             subitem->setIcon(0,QIcon(":/icons/partitionmanager.png"));
-            if((*partidx).MountPoint.isEmpty()) { if((*partidx).Partitions.count()==0) { if((*partidx).PartType.isEmpty() || ((*partidx).PartType=="BSD")) subitem->setText(1,tr("Available")); else subitem->setText(1,tr("Unmounted"));} else subitem->setText(1,tr("Partitioned")); }
+
+            if((*partidx).MountPoint.isEmpty()) {
+                if((*partidx).Partitions.count()==0) {
+                    if( (*partidx).InPool.isEmpty()) {
+                        if((*partidx).PartType.isEmpty() || ((*partidx).PartType=="BSD")) subitem->setText(1,tr("Available")); else subitem->setText(1,tr("Unmounted"));
+                    } else subitem->setText(1,tr("ZPool: ") + (*partidx).InPool);
+                } else subitem->setText(1,tr("Partitioned")); }
             else subitem->setText(1,tr("Mounted: ")+(*partidx).MountPoint);
 
             if((*partidx).Partitions.count()>0) {
@@ -719,11 +1293,19 @@ void ZManagerWindow::refreshState()
 
                 QString sz;
 
-                sz.sprintf(" (%.1lf GB)\n",((double)(*part2idx).Size)/((double)(1024.0*1024.0*1024.0)));
-                subsubitem->setText(0,(*part2idx).Name + sz + (*part2idx).PartType);
+                sz=" ("+printBytes((*part2idx).Size)+")\n";
+                subsubitem->setText(0,(*part2idx).Name + sz + " ["+(*part2idx).PartType+"]");
                 subsubitem->setIcon(0,QIcon(":/icons/kdf.png"));
-                if((*part2idx).MountPoint.isEmpty()) { if( (*part2idx).PartType.isEmpty()) subsubitem->setText(1,tr("Available")); else subsubitem->setText(1,tr("Unmounted")); }
+
+                if((*part2idx).MountPoint.isEmpty()) {
+
+                    if((*part2idx).InPool.isEmpty()) {
+                        if( (*part2idx).PartType.isEmpty()) subsubitem->setText(1,tr("Available")); else subsubitem->setText(1,tr("Unmounted"));
+                    } else subsubitem->setText(1,tr("ZPool: ") + (*part2idx).InPool);
+                }
                 else subsubitem->setText(1,tr("Mounted: ")+(*part2idx).MountPoint);
+
+
                 ++part2idx;
                 }
 
@@ -756,23 +1338,39 @@ bool ZManagerWindow::close()
 
 const QString ZManagerWindow::getStatusString(int status)
 {
+    QString result;
+
+    if(status&STATE_EXPORTED) {
+        result=tr("(Exported)\n");
+        status&=~STATE_EXPORTED;
+    }
+
+    if(status&STATE_DESTROYED) {
+        result=tr("(Destroyed)\n");
+        status&=~STATE_DESTROYED;
+    }
+
     switch(status)
     {
+    case STATE_NOTAPPLICABLE:
+        return result;
     case STATE_OFFLINE:
-        return tr("Offline");
+        return result+tr("Offline");
     case STATE_ONLINE:
-        return tr("Online");
+        return result+tr("Online");
     case STATE_DEGRADED:
-        return tr("Degraded");
+        return result+tr("Degraded");
     case STATE_FAULTED:
-        return tr("Faulted");
+        return result+tr("Faulted");
     case STATE_REMOVED:
-        return tr("Removed");
+        return result+tr("Removed");
     case STATE_UNAVAIL:
-        return tr("Unavailable");
+        return result+tr("Unavailable");
+    case STATE_AVAIL:
+        return result+tr("Available");
     default:
     case STATE_UNKNOWN:
-        return tr("Unknown");
+        return result+tr("Unknown");
 
     }
 }
@@ -780,77 +1378,81 @@ const QString ZManagerWindow::getStatusString(int status)
 
 
 
-
 void ZManagerWindow::zpoolContextMenu(QPoint p)
 {
-    zpool_t *pool;
+    struct zactions zpoolmenu[]={
+        /*  QString menutext        ,   int triggermask, triggerflags    ,  action_func slot */
+        { QString(tr("Create new pool"))    ,     ~ITEM_ISPOOL, ITEM_NONE         ,  SLOT(zpoolCreate(bool)) },
+        { QString(tr("Rename pool"))    ,     ~ITEM_ISPOOL, ITEM_NONE         ,  SLOT(zpoolRename(bool)) },
+        { QString(tr("Destroy pool"))       ,    ITEM_TYPE|ITEM_ISEXPORTED|ITEM_ISDESTROYED, ITEM_ISPOOL         ,  SLOT(zpoolDestroy(bool)) },
+        { QString(tr("Add devices..."))       ,    ITEM_TYPE|ITEM_ISEXPORTED|ITEM_ISDESTROYED, ITEM_ISPOOL         ,  SLOT(zpoolAdd(bool)) },
+        { QString(tr("Add log devices..."))       ,    ITEM_TYPE|ITEM_ISEXPORTED|ITEM_ISDESTROYED, ITEM_ISPOOL         ,  SLOT(zpoolAddLog(bool)) },
+        { QString(tr("Add cache devices..."))       ,    ITEM_TYPE|ITEM_ISEXPORTED|ITEM_ISDESTROYED, ITEM_ISPOOL         ,  SLOT(zpoolAddCache(bool)) },
+        { QString(tr("Add spare devices..."))       ,    ITEM_TYPE|ITEM_ISEXPORTED|ITEM_ISDESTROYED, ITEM_ISPOOL         ,  SLOT(zpoolAddSpare(bool)) },
+        { QString(tr("Scrub"))      ,   ITEM_TYPE|ITEM_ISEXPORTED|ITEM_ISDESTROYED, ITEM_ISPOOL         ,  SLOT(zpoolScrub(bool)) },
+        { QString(tr("Export pool"))      ,   ITEM_TYPE|ITEM_ISEXPORTED|ITEM_ISDESTROYED, ITEM_ISPOOL         ,  SLOT(zpoolExport(bool)) },
+        { QString(tr("Import pool"))    ,     ITEM_ALL, ITEM_ISPOOL|ITEM_ISEXPORTED         ,  SLOT(zpoolImport(bool)) },
+        { QString(tr("Recover destroyed pool"))    ,     ITEM_ALL, ITEM_ISPOOL|ITEM_ISDESTROYED         ,  SLOT(zpoolImport(bool)) },
+        { QString(tr("Properties..."))      ,   ITEM_TYPE|ITEM_ISEXPORTED|ITEM_ISDESTROYED, ITEM_ISPOOL         ,  SLOT(zpoolEditProperties(bool)) },
+
+        { QString(tr("Attach (mirror) device..."))      ,   ITEM_TYPE|PARENT(ITEM_TYPE&~(ITEM_ISMIRROR|ITEM_ISPOOL)), ITEM_ISDISK    ,  SLOT(zpoolAttachDevice(bool)) },
+        { QString(tr("Detach from mirror"))      ,   ITEM_TYPE|PARENT(ITEM_TYPE), ITEM_ISDISK|PARENT(ITEM_ISMIRROR)    ,  SLOT(zpoolDetachDevice(bool)) },
+        { QString(tr("Take offline"))      ,   ITEM_ALL|PARENT(ITEM_TYPE&~(ITEM_ISMIRROR|ITEM_ISPOOL|ITEM_ISRAIDZ)), ITEM_ISDISK   ,  SLOT(zpoolOfflineDevice(bool)) },
+        { QString(tr("Bring online"))      ,   ITEM_STATE, ITEM_ISOFFLINE   ,  SLOT(zpoolOnlineDevice(bool)) },
+
+        { QString(tr("Remove"))      ,   ITEM_TYPE|PARENT(ITEM_TYPE&~(ITEM_ISLOG|ITEM_ISCACHE|ITEM_ISSPARE)), ITEM_ISDISK    ,  SLOT(zpoolRemoveDevice(bool)) },
+
+
+
+
+        { QString()       ,   0, 0      ,  NULL }
+
+    };
+
+    int flags=0;
+    int idx;
+
     QMenu m(tr("zpool Menu"),this);
 
     QTreeWidgetItem *item=ui->zpoolList->itemAt(p);
 
-    if(Pools.count()>0) {
-        // THIS IS A POOL OR A DEVICE
-        QString name=item->text(0);
+    if(item!=NULL) {
+        // FIRST DETERMINE IF THE ITEM IS A POOL OR A DEVICE
+        qDebug() << item->text(0);
+        flags=0;
+        if( (lastSelectedPool=getZpoolbyName(item->text(0),item->data(0,Qt::UserRole).toInt()) )) {
+            flags=ITEM_ISPOOL;
+            lastSelectedVdev=NULL;
 
-        qDebug() << name;
-
-        // CHECK IF NAME IS A POOL OR A DEVICE
-        pool=getZpoolbyName(name);
-
-        if(!pool) {
-            // THIS IS A DEVICE
-            // TODO: ADD CONTEXT MENU FOR DEVICES THAT ARE PART OF A POOL
-
-            m.addAction(tr("Useless test action"))->setData(QVariant(0));
+            if(lastSelectedPool->Status&STATE_EXPORTED) flags|=ITEM_ISEXPORTED;
+            if(lastSelectedPool->Status&STATE_DESTROYED) flags|=ITEM_ISDESTROYED;
 
         }
         else {
-        // SHOW CONTEXT MENU FOR A POOL
+        // IT MUST BE A DEVICE, GET MORE INFORMATION
+            if(!item->isDisabled()) {
+            if( (lastSelectedVdev=getVDevbyName(item->text(0)))) flags=zpoolGetVDEVType(lastSelectedVdev);
+            else flags=ITEM_NONE;   // NO ITEM WAS SELECTED, USER MUST'VE CLICKED IN THE BLANK SPACE
+            }
+            else flags=ITEM_NONE;
+        }
+    }
 
-            m.addAction(tr("Create new pool"))->setData(QVariant(1));
-            m.addAction(tr("Destroy pool"))->setData(QVariant(2));
+    for(idx=0;zpoolmenu[idx].slot!=NULL;++idx)
+    {
+        if( (flags & zpoolmenu[idx].triggermask) == zpoolmenu[idx].triggerflags) {
 
-        // TODO: ADD MORE MENU ACTIONS HERE
-
-
+            QAction *act=m.addAction(zpoolmenu[idx].menutext);
+            connect(act,SIGNAL(triggered(bool)),this,zpoolmenu[idx].slot);
 
         }
-
-    }
-    else {
-
-        m.addAction(tr("Create new pool"))->setData(QVariant(1));
-
     }
 
 
-    QAction *res=m.exec(ui->zpoolList->viewport()->mapToGlobal(p));
+    needRefresh=false;
+    m.exec(ui->zpoolList->viewport()->mapToGlobal(p));
 
-    if(res!=NULL) {
-        int selected=res->data().toInt();
-        bool result;
-        switch(selected)
-        {
-        case 1:
-            result=zpoolCreate();
-            break;
-        case 2:
-            result=zpoolDestroy(pool);
-            break;
-        default:
-            result=false;
-            break;
-        }
-
-
-        if(result) this->refreshState();
-
-
-    }
-
-
-
-
+    if(needRefresh) refreshState();
 }
 
 void ZManagerWindow::deviceContextMenu(QPoint p)
@@ -947,6 +1549,7 @@ void ZManagerWindow::deviceContextMenu(QPoint p)
 
 void ZManagerWindow::filesystemContextMenu(QPoint p)
 {
+    Q_UNUSED(p);
 }
 
 
@@ -1028,18 +1631,84 @@ vdev_t *ZManagerWindow::getContainerDisk(vdev_t* device)
 }
 
 
+vdev_t *ZManagerWindow::getContainerGroup(vdev_t* device)
+{
+
+    QList<zpool_t>::const_iterator it=this->Pools.constBegin();
+
+
+    while(it!=this->Pools.constEnd())
+    {
+        if((*it).VDevs.count()!=0) {
+            // PROCESS ALL SLICES
+
+
+
+            if((*it).VDevs.contains(*device)) return NULL;  // THERE IS NO GROUP, THIS DEVICE WAS DIRECTLY IN THE POOL
+
+            QList<vdev_t>::const_iterator sliceit=(*it).VDevs.constBegin();
+
+            while(sliceit!=(*it).VDevs.constEnd())
+            {
+
+                if((*sliceit).Partitions.contains(*device)) return (vdev_t *)&(*sliceit);
+
+            ++sliceit;
+            }
+
+        }
+
+        ++it;
+    }
+
+    return NULL;
+
+
+
+}
 
 
 
 
 
-zpool_t *ZManagerWindow::getZpoolbyName(QString name)
+zpool_t *ZManagerWindow::getZpoolbyName(QString name,int index)
+{
+
+    if(index>=0) return (zpool_t *)&(this->Pools.at(index));
+
+QList<zpool_t>::const_iterator it=this->Pools.constBegin();
+
+while(it!=this->Pools.constEnd())
+{
+    if((*it).Name==name) {
+        return (zpool_t *)&(*it);
+    }
+    ++it;
+}
+
+return NULL;
+
+}
+vdev_t *ZManagerWindow::getVDevbyName(QString name)
 {
 QList<zpool_t>::const_iterator it=this->Pools.constBegin();
 
 while(it!=this->Pools.constEnd())
 {
-    if((*it).Name==name) return (zpool_t *)&(*it);
+    QList<vdev_t>::const_iterator vdit=(*it).VDevs.constBegin();
+    while(vdit!=(*it).VDevs.constEnd()) {
+        vdev_t *ptr=(vdev_t *)&(*vdit);
+        if((*vdit).Name==name) return ptr;
+        if((*vdit).Partitions.count()!=0) {
+            QList<vdev_t>::const_iterator vdev2=(*vdit).Partitions.constBegin();
+            while(vdev2!=(*vdit).Partitions.constEnd()) {
+                if((*vdev2).Name==name) return (vdev_t *)&(*vdev2);
+            ++vdev2;
+            }
+        }
+        ++vdit;
+    }
+
     ++it;
 }
 
@@ -1228,16 +1897,630 @@ bool ZManagerWindow::processErrors(QStringList& output,QString command)
     return false;
 }
 
-
-
-
-bool ZManagerWindow::zpoolCreate()
+bool ZManagerWindow::processzpoolErrors(QStringList& output)
 {
+    QStringList::const_iterator it=output.constBegin();
+    QString errormsg;
+    bool errorfound=false;
+
+    while(it!=output.constEnd())
+    {
+
+        if(!(*it).isEmpty()) {
+            QString tmp=(*it);
+            errormsg+= tmp + "\n";
+            errorfound=true;
+        }
+        ++it;
+    }
+
+    if(errorfound) {
+        QString msg(tr("An error was detected while executing 'zpool':\n\n"));
+        msg+=errormsg;
+        QMessageBox err(QMessageBox::Warning,tr("Error report"),msg,QMessageBox::Ok,this);
+
+        err.exec();
+
+        return true;
+
+    }
 
     return false;
+
 }
 
-bool ZManagerWindow::zpoolDestroy(zpool_t *pool)
+QString ZManagerWindow::getPoolProperty(zpool_t *pool,QString Property)
 {
-    return false;
+    zprop_t tmp;
+
+    foreach(tmp,pool->Properties) {
+        if(tmp.Name==Property) return tmp.Value;
+    }
+
 }
+
+void    ZManagerWindow::setPoolProperty(zpool_t *pool,QString Property,QString Value)
+{
+    QString cmdline="zpool set ";
+
+    cmdline+=Property+"="+Value;
+
+    cmdline+=" \""+pool->Name+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+
+}
+
+
+void ZManagerWindow::zpoolCreate(bool b)
+{
+
+    Q_UNUSED(b);
+    DialogNewPool dlg;
+
+    dlg.setDevices(&Disks);
+    dlg.setTitle(tr("Create new zpool"));
+
+    int result=dlg.exec();
+
+    if(result) {
+    QString cmdline="zpool create ";
+
+    cmdline+="\""+dlg.getName()+"\" ";
+
+    cmdline+=dlg.getRaidType();
+
+    QStringList vdev=dlg.getVdevList();
+
+    QString arg;
+
+    foreach( arg, vdev) cmdline+=" "+arg;
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+    }
+}
+
+void ZManagerWindow::zpoolDestroy(bool b)
+{
+    Q_UNUSED(b);
+
+    QString cmdline="zpool destroy ";
+
+
+    cmdline+="\""+lastSelectedPool->Name+"\"";
+
+    // TODO: ASK USER FOR CONFIRMATION BEFORE DESTROYING ANYTHING!
+
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+}
+
+void ZManagerWindow::zpoolClear(bool b)
+{
+    Q_UNUSED(b);
+
+    zpool_t *ptr=lastSelectedPool;
+    QString cmdline;
+    cmdline="zpool clear \""+ptr->Name+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(processzpoolErrors(a)) needRefresh=false;
+    else needRefresh=true;
+
+
+}
+
+
+
+void ZManagerWindow::on_toolButton_clicked()
+{
+    lastSelectedPool=getZpoolbyName(ui->poolLabel->text());
+
+    if(lastSelectedPool) {
+        needRefresh=false;
+        zpoolClear(false);
+        if(needRefresh) refreshState();
+    }
+
+}
+
+
+
+
+// ANALYZE THE VDEV, AND RETURN A SERIES OF FLAGS (ITEM_XXXXX) TO BE USED
+// FOR EASIER HANDLING OF THE DIFFERENT KINDS OF VDEVS
+
+int ZManagerWindow::zpoolGetVDEVType(vdev_t *dev)
+{
+    int result=0;
+    if(getDiskbyName(dev->Name)!=NULL) result|=ITEM_ISDISK;
+
+    if(dev->Name.startsWith("mirror")) result|=ITEM_ISMIRROR;
+    if(dev->Name.startsWith("raidz")) result|=ITEM_ISRAIDZ;
+    if(dev->Name.startsWith("logs")) result|=ITEM_ISLOG;
+    if(dev->Name.startsWith("cache")) result|=ITEM_ISCACHE;
+    if(dev->Name.startsWith("spares")) result|=ITEM_ISSPARE;
+
+
+    if(dev->Status==STATE_OFFLINE) result |=ITEM_ISOFFLINE;
+    if(dev->Status==STATE_DEGRADED) result |=ITEM_ISDEGRADED;
+    if(dev->Status==STATE_FAULTED) result |=ITEM_ISFAULTED;
+    if(dev->Status==STATE_REMOVED) result |=ITEM_ISREMOVED;
+    if(dev->Status==STATE_UNAVAIL) result |=ITEM_ISUNAVAIL;
+
+
+
+    vdev_t *parent=getContainerGroup(dev);
+
+
+    // RETURN THE FLAGS FOR THIS DEVICE IN THE LOW BYTE, AND ITS IMMEDIATE PARENT
+    if(parent==NULL) { return result | PARENT(ITEM_ISPOOL); }
+    else return result | PARENT((zpoolGetVDEVType(parent) & ITEM_ALL) );
+}
+
+
+void ZManagerWindow::zpoolEditProperties(bool)
+{
+    DialogProp dlg;
+
+    dlg.refreshList(lastSelectedPool);
+
+    int result=dlg.exec();
+
+    if(result==QDialog::Accepted) {
+        // TODO: UPDATE ALL MODIFIED PROPERTIES
+
+        needRefresh=true;
+    }
+    return;
+}
+
+void ZManagerWindow::zpoolRemoveDevice(bool b)
+{
+    Q_UNUSED(b);
+
+    QString cmdline="zpool remove ";
+
+    cmdline+="\""+lastSelectedVdev->InPool+"\" "+lastSelectedVdev->Name;
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+
+}
+
+void ZManagerWindow::zpoolAttachDevice(bool b)
+{
+    Q_UNUSED(b);
+
+    DialogNewPool dlg;
+
+    dlg.setDevices(&Disks);
+
+    dlg.setTitle(tr("Attach mirror devices to ")+lastSelectedVdev->Name);
+
+    dlg.setName(lastSelectedVdev->InPool);
+
+    dlg.setType(DialogNewPool::DISK_MIRROR);
+
+    dlg.setNumDisks(1);
+
+    int result=dlg.exec();
+
+    if(result) {
+    QString cmdline="zpool attach ";
+
+    cmdline+="\""+dlg.getName()+"\" "+lastSelectedVdev->Name+" ";
+
+    QStringList vdev=dlg.getVdevList();
+
+    QString arg;
+
+    foreach( arg, vdev) cmdline+=" "+arg;
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+    }
+
+
+
+    return;
+
+}
+
+void ZManagerWindow::zpoolDetachDevice(bool b)
+{
+    Q_UNUSED(b);
+
+    QString cmdline="zpool detach ";
+
+    cmdline+="\""+lastSelectedVdev->InPool+"\" "+lastSelectedVdev->Name;
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+
+}
+
+
+
+void ZManagerWindow::zpoolOfflineDevice(bool b)
+{
+    Q_UNUSED(b);
+
+    QString cmdline="zpool offline ";
+
+    cmdline+="\""+lastSelectedVdev->InPool+"\" "+lastSelectedVdev->Name;
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+}
+
+void ZManagerWindow::zpoolOnlineDevice(bool b)
+{
+    Q_UNUSED(b);
+
+    QString cmdline="zpool online ";
+
+    cmdline+="\""+lastSelectedVdev->InPool+"\" "+lastSelectedVdev->Name;
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+}
+
+void ZManagerWindow::zpoolScrub(bool b)
+{
+    Q_UNUSED(b);
+
+    QString cmdline="zpool scrub ";
+
+    cmdline+="\""+lastSelectedPool->Name+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+}
+
+void ZManagerWindow::zpoolExport(bool b)
+{
+    Q_UNUSED(b);
+
+    QString cmdline="zpool export ";
+
+    cmdline+="\""+lastSelectedPool->Name+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+}
+
+void ZManagerWindow::zpoolImport(bool b)
+{
+    Q_UNUSED(b);
+
+    DialogName dlg;
+
+    if(lastSelectedPool->Status&STATE_DESTROYED)    dlg.setTitle(tr("Recover destroyed pool as..."));
+        else dlg.setTitle(tr("Import pool as..."));
+
+
+    QStringList usednames;
+
+    zpool_t tmp;
+
+    foreach(tmp, Pools) {
+        if(!(tmp.Status&(STATE_DESTROYED|STATE_EXPORTED))) usednames.append(tmp.Name);
+    }
+
+    dlg.setForbiddenList(usednames);
+    dlg.setName(lastSelectedPool->Name);
+
+
+    int result=dlg.exec();
+
+    if(result==QDialog::Accepted) {
+
+    QString cmdline="zpool import ";
+
+    if(lastSelectedPool->Status&STATE_DESTROYED) cmdline+="-D ";
+
+    cmdline+=lastSelectedPool->Type; //"\""+lastSelectedPool->Name+"\"";        // Type CONTAINS THE ID OF THE POOL, IT'S BETTER TO USE THE ID TO PREVENT PROBLEMS
+
+    cmdline+=" \""+ dlg.getName()+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+    }
+
+}
+
+void ZManagerWindow::zpoolRename(bool b)
+{
+    Q_UNUSED(b);
+
+    DialogName dlg;
+
+    dlg.setTitle(tr("Rename pool"));
+
+    dlg.setName(lastSelectedPool->Name);
+
+    QStringList usednames;
+
+    zpool_t tmp;
+
+    foreach(tmp, Pools) {
+        if(!(tmp.Status&(STATE_DESTROYED|STATE_EXPORTED))) usednames.append(tmp.Name);
+    }
+
+    dlg.setForbiddenList(usednames);
+
+
+    int result=dlg.exec();
+
+
+    if(result==QDialog::Accepted) {
+
+        QString id=getPoolProperty(lastSelectedPool,"guid");
+
+        QString cmdline="zpool export ";
+
+        cmdline+="\""+lastSelectedPool->Name+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) {
+        cmdline="zpool import "+id+" \""+dlg.getName()+"\"";
+
+        a=pcbsd::Utils::runShellCommand(cmdline);
+
+        if(!processzpoolErrors(a)) needRefresh=true;
+
+
+    }
+
+    }
+}
+
+
+void ZManagerWindow::zpoolAdd(bool b)
+{
+    Q_UNUSED(b);
+
+    DialogNewPool dlg;
+
+    dlg.setDevices(&Disks);
+
+    dlg.setTitle(tr("Add more devices to zpool"));
+    dlg.setName(lastSelectedPool->Name);
+
+    if(lastSelectedPool->Type=="striped") dlg.setType(DialogNewPool::DISK_STRIPE);
+    if(lastSelectedPool->Type=="mirror") {
+        dlg.setType(DialogNewPool::DISK_MIRROR);
+        dlg.setNumDisks(lastSelectedPool->VDevs[0].Partitions.count());
+        }
+    if(lastSelectedPool->Type=="raidz") {
+        dlg.setType(DialogNewPool::DISK_RAIDZ);
+        dlg.setNumDisks(lastSelectedPool->VDevs[0].Partitions.count());
+
+    }
+    if(lastSelectedPool->Type=="raidz2") {
+        dlg.setType(DialogNewPool::DISK_RAIDZ2);
+        dlg.setNumDisks(lastSelectedPool->VDevs[0].Partitions.count());
+    }
+    if(lastSelectedPool->Type=="raidz3") {
+        dlg.setType(DialogNewPool::DISK_RAIDZ3);
+        dlg.setNumDisks(lastSelectedPool->VDevs[0].Partitions.count());
+    }
+
+
+    int result=dlg.exec();
+
+    if(result) {
+    QString cmdline="zpool add ";
+
+    cmdline+="\""+dlg.getName()+"\" ";
+
+    cmdline+=dlg.getRaidType();
+
+    QStringList vdev=dlg.getVdevList();
+
+    QString arg;
+
+    foreach( arg, vdev) cmdline+=" "+arg;
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+    }
+
+
+
+    return;
+}
+
+void ZManagerWindow::zpoolAddLog(bool b)
+{
+    Q_UNUSED(b);
+
+    DialogNewPool dlg;
+
+    dlg.setDevices(&Disks);
+
+    dlg.setTitle(tr("Add log devices to zpool"));
+    dlg.setName(lastSelectedPool->Name);
+
+    dlg.setType(DialogNewPool::DISK_LOG);
+
+    int result=dlg.exec();
+
+    if(result) {
+    QString cmdline="zpool add ";
+
+    cmdline+="\""+dlg.getName()+"\" ";
+
+    cmdline+=dlg.getRaidType();
+
+    QStringList vdev=dlg.getVdevList();
+
+    QString arg;
+
+    foreach( arg, vdev) cmdline+=" "+arg;
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+    }
+
+
+
+    return;
+
+}
+void ZManagerWindow::zpoolAddCache(bool b)
+{
+    Q_UNUSED(b);
+
+    DialogNewPool dlg;
+
+    dlg.setDevices(&Disks);
+
+    dlg.setTitle(tr("Add cache devices to zpool"));
+    dlg.setName(lastSelectedPool->Name);
+
+    dlg.setType(DialogNewPool::DISK_CACHE);
+
+    int result=dlg.exec();
+
+    if(result) {
+    QString cmdline="zpool add ";
+
+    cmdline+="\""+dlg.getName()+"\" ";
+
+    cmdline+=dlg.getRaidType();
+
+    QStringList vdev=dlg.getVdevList();
+
+    QString arg;
+
+    foreach( arg, vdev) cmdline+=" "+arg;
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+    }
+
+
+
+    return;
+
+}
+void ZManagerWindow::zpoolAddSpare(bool b)
+{
+    Q_UNUSED(b);
+
+    DialogNewPool dlg;
+
+    dlg.setDevices(&Disks);
+
+    dlg.setTitle(tr("Add spare devices to zpool"));
+    dlg.setName(lastSelectedPool->Name);
+
+    dlg.setType(DialogNewPool::DISK_SPARE);
+
+    int result=dlg.exec();
+
+    if(result) {
+    QString cmdline="zpool add ";
+
+    cmdline+="\""+dlg.getName()+"\" ";
+
+    cmdline+=dlg.getRaidType();
+
+    QStringList vdev=dlg.getVdevList();
+
+    QString arg;
+
+    foreach( arg, vdev) cmdline+=" "+arg;
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzpoolErrors(a)) needRefresh=true;
+
+    }
+
+
+
+    return;
+
+}
+
+
+// PRINT SIZE IN BYTES, KBYTES , GBYTES OR TBYTES
+QString printBytes(unsigned long long bytes,int unit)
+{
+    QString a;
+
+    if(unit>4) unit=-1;
+
+    // UNIT == -1 FOR AUTOMATIC SELECTION OF UNITS
+    if(unit==-1) {
+    if(bytes<2*1024) return a.sprintf("%llu bytes",bytes);
+    if(bytes<2*1024*1024) return a.sprintf("%.2lf kB",((double)bytes)/1024);
+    if(bytes<1*1024*1024*1024) return a.sprintf("%.2lf MB",((double)bytes)/(1024*1024));
+    if(bytes<(1LL*1024LL*1024LL*1024LL*1024LL)) return a.sprintf("%.2lf GB",((double)bytes)/(1024*1024*1024));
+    return a.sprintf("%.2lf TB",((double)bytes)/((double)1024.0*1024.0*1024.0*1024.0));
+    }
+
+    switch(unit)
+    {
+    case 1:
+        return a.sprintf("%.2lf",((double)bytes)/1024);
+    case 2:
+        return a.sprintf("%.2lf",((double)bytes)/(1024*1024));
+    case 3:
+        return a.sprintf("%.2lf",((double)bytes)/(1024*1024*1024));
+    case 4:
+        return a.sprintf("%.2lf",((double)bytes)/((double)1024.0*1024.0*1024.0*1024.0));
+    default:
+        return a.sprintf("%llu",bytes);
+
+    }
+
+}
+
+
+// GET PREFERRED UNITS FOR PRINTING
+int printUnits(unsigned long long bytes)
+{
+    if(bytes<2*1024) return 0;
+    if(bytes<2*1024*1024) return 1;
+    if(bytes<1*1024*1024*1024) return 2;
+    if(bytes<(1LL*1024LL*1024LL*1024LL*1024LL)) return 3;
+    return 4;
+}
+
+

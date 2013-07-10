@@ -174,51 +174,6 @@ void DialogPartition::setDevice(vdev_t * _device)
 }
 
 
-// PRINT SIZE IN BYTES, KBYTES , GBYTES OR TBYTES
-QString DialogPartition::printBytes(unsigned long long bytes,int unit)
-{
-    QString a;
-
-    if(unit>4) unit=-1;
-
-    // UNIT == -1 FOR AUTOMATIC SELECTION OF UNITS
-    if(unit==-1) {
-    if(bytes<2*1024) return a.sprintf("%llu bytes",bytes);
-    if(bytes<2*1024*1024) return a.sprintf("%.2lf kB",((double)bytes)/1024);
-    if(bytes<1*1024*1024*1024) return a.sprintf("%.2lf MB",((double)bytes)/(1024*1024));
-    if(bytes<(1LL*1024LL*1024LL*1024LL*1024LL)) return a.sprintf("%.2lf GB",((double)bytes)/(1024*1024*1024));
-    return a.sprintf("%.2lf TB",((double)bytes)/((double)1024.0*1024.0*1024.0*1024.0));
-    }
-
-    switch(unit)
-    {
-    case 1:
-        return a.sprintf("%.2lf",((double)bytes)/1024);
-    case 2:
-        return a.sprintf("%.2lf",((double)bytes)/(1024*1024));
-    case 3:
-        return a.sprintf("%.2lf",((double)bytes)/(1024*1024*1024));
-    case 4:
-        return a.sprintf("%.2lf",((double)bytes)/((double)1024.0*1024.0*1024.0*1024.0));
-    default:
-        return a.sprintf("%llu",bytes);
-
-    }
-
-}
-
-
-// GET PREFERRED UNITS FOR PRINTING
-int DialogPartition::printUnits(unsigned long long bytes)
-{
-    if(bytes<2*1024) return 0;
-    if(bytes<2*1024*1024) return 1;
-    if(bytes<1*1024*1024*1024) return 2;
-    if(bytes<(1LL*1024LL*1024LL*1024LL*1024LL)) return 3;
-    return 4;
-}
-
-
 void DialogPartition::on_SizeSelect_currentIndexChanged(int index)
 {
     ui->SizeText->setText(printBytes(((unsigned long long)ui->sizeSlider->sliderPosition())*device->SectorSize,ui->SizeSelect->currentIndex()));
