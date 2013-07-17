@@ -1125,7 +1125,9 @@ while(pit!=prop.constEnd())
         if(a.count()>=2) {
         zprop_t proptmp;
         proptmp.Name=a[0];
-        proptmp.Value=a[1];
+        QList<QString> val=a.mid(1,a.count()-2);
+        proptmp.Value.clear();
+        while(val.count()) { proptmp.Value+=val.first(); val.removeFirst(); if(val.count()) proptmp.Value+=" "; }
 
         proplist->append(proptmp);
         }
@@ -1943,7 +1945,7 @@ void    ZManagerWindow::setPoolProperty(zpool_t *pool,QString Property,QString V
 {
     QString cmdline="zpool set ";
 
-    cmdline+=Property+"="+Value;
+    cmdline+=Property+"=\""+Value+"\"";
 
     cmdline+=" \""+pool->Name+"\"";
 
@@ -1990,6 +1992,11 @@ void ZManagerWindow::zpoolDestroy(bool b)
 {
     Q_UNUSED(b);
 
+    if(getPoolProperty(lastSelectedPool,"readonly")=="on") {
+        QMessageBox msg(QMessageBox::Information,tr("Important information"),tr("The pool was imported in read-only mode, therefore attempting to destroy the pool will leave the pool in the state it was when imported, not necessarily destroyed."),QMessageBox::Ok);
+        msg.exec();
+    }
+
     QString cmdline="zpool destroy ";
 
 
@@ -1997,6 +2004,8 @@ void ZManagerWindow::zpoolDestroy(bool b)
 
     // TODO: ASK USER FOR CONFIRMATION BEFORE DESTROYING ANYTHING!
 
+
+    qDebug() << cmdline;
 
     QStringList a=pcbsd::Utils::runShellCommand(cmdline);
 
@@ -2079,6 +2088,21 @@ void ZManagerWindow::zpoolEditProperties(bool)
 
     if(result==QDialog::Accepted) {
         // TODO: UPDATE ALL MODIFIED PROPERTIES
+        QStringList props;
+        QStringList vals;
+
+        props=dlg.getAllChangedProps();
+
+        vals=dlg.getAllChangedValues();
+
+        QStringList::const_iterator itp=props.constBegin(),itv=vals.constBegin();
+
+        while(itp!=props.constEnd()&&itv!=vals.constEnd()) {
+            setPoolProperty(lastSelectedPool,(*itp),(*itv));
+
+            ++itp;
+            ++itv;
+        }
 
         needRefresh=true;
     }
@@ -2203,9 +2227,16 @@ void ZManagerWindow::zpoolExport(bool b)
 {
     Q_UNUSED(b);
 
+    if(getPoolProperty(lastSelectedPool,"readonly")=="on") {
+        QMessageBox msg(QMessageBox::Information,tr("Important information"),tr("The pool was imported in read-only mode, therefore attempting to export the pool will leave the pool in the state it was when imported, not necessarily exported."),QMessageBox::Ok);
+        msg.exec();
+    }
+
     QString cmdline="zpool export ";
 
     cmdline+="\""+lastSelectedPool->Name+"\"";
+
+    qDebug() << cmdline;
 
     QStringList a=pcbsd::Utils::runShellCommand(cmdline);
 
@@ -2234,6 +2265,7 @@ void ZManagerWindow::zpoolImport(bool b)
     dlg.setForbiddenList(usednames);
     dlg.setName(lastSelectedPool->Name);
 
+    dlg.showOptions(true);
 
     int result=dlg.exec();
 
@@ -2241,11 +2273,18 @@ void ZManagerWindow::zpoolImport(bool b)
 
     QString cmdline="zpool import ";
 
+    if(dlg.importReadOnly()) cmdline+=" -o readonly=on ";
+
+    if(dlg.importSetAltRoot()) cmdline+=" -R \""+dlg.getAltRoot()+"\" ";
+
     if(lastSelectedPool->Status&STATE_DESTROYED) cmdline+="-D ";
 
     cmdline+=lastSelectedPool->Type; //"\""+lastSelectedPool->Name+"\"";        // Type CONTAINS THE ID OF THE POOL, IT'S BETTER TO USE THE ID TO PREVENT PROBLEMS
 
     cmdline+=" \""+ dlg.getName()+"\"";
+
+    qDebug() << cmdline;
+
 
     QStringList a=pcbsd::Utils::runShellCommand(cmdline);
 
@@ -2259,11 +2298,20 @@ void ZManagerWindow::zpoolRename(bool b)
 {
     Q_UNUSED(b);
 
+    if(getPoolProperty(lastSelectedPool,"readonly")=="on") {
+        QMessageBox msg(QMessageBox::Information,tr("Important information"),tr("The pool was imported in read-only mode, it cannot be renamed."),QMessageBox::Ok);
+        msg.exec();
+        return;
+    }
+
+
     DialogName dlg;
 
     dlg.setTitle(tr("Rename pool"));
 
     dlg.setName(lastSelectedPool->Name);
+
+    dlg.showOptions(false);
 
     QStringList usednames;
 
@@ -2287,11 +2335,13 @@ void ZManagerWindow::zpoolRename(bool b)
 
         cmdline+="\""+lastSelectedPool->Name+"\"";
 
+        qDebug() << cmdline;
     QStringList a=pcbsd::Utils::runShellCommand(cmdline);
 
     if(!processzpoolErrors(a)) {
         cmdline="zpool import "+id+" \""+dlg.getName()+"\"";
 
+        qDebug() << cmdline;
         a=pcbsd::Utils::runShellCommand(cmdline);
 
         if(!processzpoolErrors(a)) needRefresh=true;

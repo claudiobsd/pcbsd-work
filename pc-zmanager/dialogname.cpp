@@ -1,4 +1,5 @@
 #include <QLineEdit>
+#include <QCheckBox>
 #include "dialogname.h"
 #include "ui_dialogname.h"
 
@@ -55,4 +56,30 @@ void DialogName::on_nameEdit_textChanged(const QString &arg1)
         ui->nameEdit->setStyleSheet("");
         isValid=true;
     }
+}
+
+void DialogName::on_checkAltRoot_stateChanged(int arg1)
+{
+    ui->editAltRoot->setEnabled(ui->checkAltRoot->isChecked());
+}
+
+bool DialogName::importReadOnly()
+{
+    return ui->checkReadOnly->isChecked();
+}
+
+bool DialogName::importSetAltRoot()
+{
+    return ui->checkAltRoot->isChecked();
+}
+
+QString DialogName::getAltRoot()
+{
+    return ui->editAltRoot->text();
+}
+
+
+void DialogName::showOptions(bool show)
+{
+    ui->frame->setVisible(show);
 }

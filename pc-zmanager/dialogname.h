@@ -18,6 +18,10 @@ public:
     void setForbiddenList(QStringList& a);
     void setTitle(QString t);
     void setName(QString t);
+    void showOptions(bool show);
+    bool importReadOnly();
+    bool importSetAltRoot();
+    QString getAltRoot();
 
     QString getName();
 
@@ -30,6 +34,8 @@ public slots:
     
 private slots:
     void on_nameEdit_textChanged(const QString &arg1);
+
+    void on_checkAltRoot_stateChanged(int arg1);
 
 private:
     Ui::DialogName *ui;

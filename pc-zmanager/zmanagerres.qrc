@@ -7,7 +7,9 @@
         <file>icons/task-reject.png</file>
         <file>icons/partitionmanager.png</file>
         <file>icons/kdf.png</file>
-        <file>icons/user-busy.png</file>
-        <file>icons/user-online.png</file>
+        <file>icons/user-busy-small-32.png</file>
+        <file>icons/user-online-small-32.png</file>
+        <file>icons/kexi.png</file>
+        <file>icons/camera-photo.png</file>
     </qresource>
 </RCC>

@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>605</width>
-    <height>461</height>
+    <width>606</width>
+    <height>526</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -20,11 +20,21 @@
   <widget class="QWidget" name="centralWidget">
    <layout class="QVBoxLayout" name="verticalLayout">
     <item>
-     <widget class="QTabWidget" name="tabWidget">
+     <widget class="QTabWidget" name="tabContainer">
       <property name="currentIndex">
-       <number>1</number>
+       <number>0</number>
+      </property>
+      <property name="iconSize">
+       <size>
+        <width>32</width>
+        <height>32</height>
+       </size>
       </property>
       <widget class="QWidget" name="tabDisk">
+       <attribute name="icon">
+        <iconset resource="zmanagerres.qrc">
+         <normaloff>:/icons/partitionmanager.png</normaloff>:/icons/partitionmanager.png</iconset>
+       </attribute>
        <attribute name="title">
         <string>Disks</string>
        </attribute>
@@ -49,8 +59,12 @@
        </layout>
       </widget>
       <widget class="QWidget" name="tabZPools">
+       <attribute name="icon">
+        <iconset resource="zmanagerres.qrc">
+         <normaloff>:/icons/server-database.png</normaloff>:/icons/server-database.png</iconset>
+       </attribute>
        <attribute name="title">
-        <string>ZFS Pools and File Systems</string>
+        <string>ZFS Pools</string>
        </attribute>
        <layout class="QGridLayout" name="gridLayout_2">
         <item row="0" column="0">
@@ -176,6 +190,15 @@
         </item>
        </layout>
       </widget>
+      <widget class="QWidget" name="tabZFS">
+       <attribute name="icon">
+        <iconset resource="zmanagerres.qrc">
+         <normaloff>:/icons/kexi.png</normaloff>:/icons/kexi.png</iconset>
+       </attribute>
+       <attribute name="title">
+        <string>ZFS Filesystems</string>
+       </attribute>
+      </widget>
      </widget>
     </item>
    </layout>
@@ -185,7 +208,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>605</width>
+     <width>606</width>
      <height>21</height>
     </rect>
    </property>
