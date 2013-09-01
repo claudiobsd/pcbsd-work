@@ -25,21 +25,27 @@ SOURCES += main.cpp\
     dialogmount.cpp \
     dialognewpool.cpp \
     dialogname.cpp \
-    dialogprop.cpp
+    dialogprop.cpp \
+    dialogfscreate.cpp \
+    dialogfsprop.cpp
 
 HEADERS  += zmanagerwindow.h \
     dialogpartition.h \
     dialogmount.h \
     dialognewpool.h \
     dialogname.h \
-    dialogprop.h
+    dialogprop.h \
+    dialogfscreate.h \
+    dialogfsprop.h
 
 FORMS    += zmanagerwindow.ui \
     dialogpartition.ui \
     dialogmount.ui \
     dialognewpool.ui \
     dialogname.ui \
-    dialogprop.ui
+    dialogprop.ui \
+    dialogfscreate.ui \
+    dialogfsprop.ui
 # DEBUG ONLY, IT SHOULD BE ONLY ../libpcbsd
 LIBS	+= -L../../pcbsd/src-qt4/libpcbsd -lQtSolutions_SingleApplication-head -lpcbsd-utils
 

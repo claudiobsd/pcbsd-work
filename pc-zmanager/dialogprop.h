@@ -9,19 +9,6 @@ namespace Ui {
 class DialogProp;
 }
 
-#define PROP_READONLY 1
-#define PROP_ISNUMBER 2
-#define PROP_ISOPTION  4
-#define PROP_ISPATH   8
-#define PROP_ISSTRING 16
-#define PROP_CHANGED 32
-
-struct zproperty {
-    QString Name;
-    QString Description;
-    QStringList ValidOptions;
-    int Flags;
-};
 
 
 class DialogProp : public QDialog

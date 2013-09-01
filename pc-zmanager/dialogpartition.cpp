@@ -49,7 +49,7 @@ void DialogPartition::setDevice(vdev_t * _device)
     /* So we will use coarser granularity to (larger sectors) to make it work */
     granularity=0;
     unsigned long long temp=device->SectorsCount;
-    while(temp > 1<<31) {
+    while(temp > 1ULL<<31) {
         granularity++;
         temp>>=1;
     }
@@ -176,11 +176,13 @@ void DialogPartition::setDevice(vdev_t * _device)
 
 void DialogPartition::on_SizeSelect_currentIndexChanged(int index)
 {
+    Q_UNUSED(index);
     ui->SizeText->setText(printBytes(((unsigned long long)ui->sizeSlider->sliderPosition())*device->SectorSize,ui->SizeSelect->currentIndex()));
 }
 
 void DialogPartition::on_sizeSlider_valueChanged(int value)
 {
+    Q_UNUSED(value);
     ui->SizeText->setText(printBytes(( ((unsigned long long)ui->sizeSlider->sliderPosition())<<granularity)*device->SectorSize,ui->SizeSelect->currentIndex()));
 
 }
@@ -235,6 +237,8 @@ QString DialogPartition::getPartType()
 
 void DialogPartition::on_devLayout_currentItemChanged(QTreeWidgetItem *current, QTreeWidgetItem *previous)
 {
+    Q_UNUSED(previous);
+
     if(current->text(0)!=tr("** FREE **")) {
         ui->PartType->setEnabled(false);
         ui->SizeSelect->setEnabled(false);
@@ -259,6 +263,8 @@ void DialogPartition::on_devLayout_currentItemChanged(QTreeWidgetItem *current, 
 
 void DialogPartition::on_PartType_currentIndexChanged(int index)
 {
+    Q_UNUSED(index);
+
     if((ui->PartType->currentText()=="freebsd-ufs")
       || (ui->PartType->currentText()=="freebsd-boot") ) ui->newfsCheck->setEnabled(true);
     else { ui->newfsCheck->setEnabled(false); ui->newfsCheck->setChecked(false); }

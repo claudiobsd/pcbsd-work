@@ -397,6 +397,8 @@ QStringList DialogProp::getAllChangedValues()
 
 void DialogProp::on_propList_itemChanged(QTreeWidgetItem *item, int column)
 {
+    Q_UNUSED(column);
+
     QString prop=item->text(0);
 
     QList<zproperty>::iterator pr=AllProperties.begin();
@@ -411,6 +413,8 @@ void DialogProp::on_propList_itemChanged(QTreeWidgetItem *item, int column)
 
 void DialogProp::on_propList_comboChanged(int index)
 {
+    Q_UNUSED(index);
+
     QComboBox *caller=(QComboBox *)sender();
     int idx=caller->itemData(0).toInt(),compare;
 

@@ -6,6 +6,8 @@
 #include "dialognewpool.h"
 #include "dialogname.h"
 #include "dialogprop.h"
+#include "dialogfsprop.h"
+#include "dialogfscreate.h"
 #include <pcbsd-utils.h>
 #include <QDebug>
 #include <QIcon>
@@ -14,6 +16,8 @@
 #include <QMenu>
 #include <QAction>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QTreeWidgetItemIterator>
 
 ZManagerWindow::ZManagerWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -22,6 +26,7 @@ ZManagerWindow::ZManagerWindow(QWidget *parent) :
 
     lastSelectedPool=NULL;
     lastSelectedVdev=NULL;
+    lastSelectedFileSystem=NULL;
 
     ui->setupUi(this);
 
@@ -37,8 +42,18 @@ ZManagerWindow::ZManagerWindow(QWidget *parent) :
 
     connect(ui->zpoolList,SIGNAL(customContextMenuRequested(QPoint)),SLOT(zpoolContextMenu(QPoint)));
     connect(ui->deviceList,SIGNAL(customContextMenuRequested(QPoint)),SLOT(deviceContextMenu(QPoint)));
+    connect(ui->fsList,SIGNAL(customContextMenuRequested(QPoint)),SLOT(filesystemContextMenu(QPoint)));
 
     ui->frameStatus->setVisible(false);
+
+
+    ui->fspoolList->setIconSize(QSize(48,48));
+    ui->tabZFS->layout()->setAlignment(ui->dropDownButton,Qt::AlignTop);
+
+    ui->fsList->setIconSize(QSize(48,48));
+    ui->fsList->header()->setStretchLastSection(false);
+    ui->fsList->header()->setResizeMode(0,QHeaderView::Stretch);
+    ui->fsList->header()->setResizeMode(1,QHeaderView::ResizeToContents);
 
 }
 
@@ -60,6 +75,8 @@ void ZManagerWindow::slotSingleInstance()
 }
 
 
+// THIS IS THE MAIN FUNCTION THAT GATHERS ALL INFORMATION FROM THE BACKEND
+
 void ZManagerWindow::GetCurrentTopology()
 {
 
@@ -74,11 +91,15 @@ void ZManagerWindow::GetCurrentTopology()
     QStringList lbl=pcbsd::Utils::runShellCommand("glabel status");
     QStringList m=pcbsd::Utils::runShellCommand("mount");
     QStringList prop;   // GET PROPERTIES FOR ALL POOLS ONCE WE HAVE A LIST OF POOLS
+    QStringList zfsl=pcbsd::Utils::runShellCommand("zfs list -H -t all");
+    QStringList zfspr=pcbsd::Utils::runShellCommand("zfs get -H all");
+
 
     // CLEAR ALL EXISTING TOPOLOGY
     this->Pools.clear();
     this->Disks.clear();
     this->Errors.clear();
+    this->FileSystems.clear();
 
     QStringList::const_iterator idx;
     int state;
@@ -1138,6 +1159,64 @@ while(pit!=prop.constEnd())
     ++pit;
 }
 
+
+
+// BEGIN PROCESSING FILESYSTEMS
+
+
+QStringList::const_iterator fsit=zfsl.constBegin();
+
+while(fsit!=zfsl.constEnd())
+{
+
+    QString tmpline=(*fsit);
+
+    QStringList line=tmpline.split("\t",QString::SkipEmptyParts);
+
+    if(line.count()>=4) {
+     zfs_t tmp;
+     tmp.FullPath=line[0];
+     tmp.Properties.clear();
+     FileSystems.append(tmp);
+    }
+
+    ++fsit;
+}
+
+
+// GET ALL PROPERTIES FOR FILESYSTEMS
+
+
+QStringList::const_iterator fspr=zfspr.constBegin();
+
+while(fspr!=zfspr.constEnd())
+{
+
+    QStringList line=(*fspr).split("\t",QString::SkipEmptyParts);
+
+    if(line.count()>=4) {
+     zprop_t tmp;
+     zfs_t *zptr=getFileSystembyPath(line[0]);
+     if(zptr) {
+
+         tmp.Name=line[1];
+         tmp.Value=line[2];
+         if(tmp.Value=="-") tmp.Value.clear();
+         tmp.From=line[3];
+         if(tmp.From=="-") tmp.Source=ZFS_SRCNONE;
+         if(tmp.From=="default") tmp.Source=ZFS_SRCDEFAULT;
+         if(tmp.From=="local")  tmp.Source=ZFS_SRCLOCAL;
+         if(tmp.From.startsWith("inherited")) tmp.Source=ZFS_SRCINHERIT;
+
+         zptr->Properties.append(tmp);
+    }
+    }
+
+    ++fspr;
+}
+
+
+
 }
 
 void ZManagerWindow::refreshState()
@@ -1147,6 +1226,8 @@ void ZManagerWindow::refreshState()
 
     ui->zpoolList->clear();
     ui->deviceList->clear();
+    ui->fspoolList->clear();
+    ui->fsList->clear();
 
 
     // SHOW ERRORS
@@ -1169,6 +1250,7 @@ void ZManagerWindow::refreshState()
     QList<zpool_t>::iterator it=Pools.begin();
 
     while(it!=Pools.end()) {
+        // ADD POOL TO THE POOL LIST
     QTreeWidgetItem *item=new QTreeWidgetItem(ui->zpoolList);
     item->setText(0,(*it).Name);
     item->setIcon(0,QIcon(":/icons/server-database.png"));
@@ -1179,7 +1261,17 @@ void ZManagerWindow::refreshState()
     if((*it).Status==STATE_ONLINE) item->setIcon(1,QIcon(":/icons/task-complete.png"));
     else if( ((*it).Status==STATE_FAULTED)|| ((*it).Status==STATE_UNAVAIL)|| ((*it).Status==STATE_REMOVED)) item->setIcon(1,QIcon(":/icons/task-reject.png"));
         else item->setIcon(1,QIcon(":/icons/task-attention.png"));
+
+    // ALSO ADD IT TO THE FILESYSTEMS TAB, BUT ONLY IF IT'S A VALID POOL (NOT DESTROYED OR EXPORTED)
+    QTreeWidgetItem *fsitem=new QTreeWidgetItem(ui->fspoolList);
+    fsitem->setText(0,(*it).Name);
+    fsitem->setIcon(0,QIcon(":/icons/server-database.png"));
+    fsitem->setData(0,Qt::UserRole,QVariant(itindex));
     }
+
+
+
+
 
     QList<vdev_t>::const_iterator devit=(*it).VDevs.constBegin();
 
@@ -1328,6 +1420,7 @@ void ZManagerWindow::refreshState()
 
 ui->zpoolList->expandAll();
 ui->deviceList->expandAll();
+if(ui->fspoolList->topLevelItem(0)) ui->fspoolList->setCurrentItem(ui->fspoolList->topLevelItem(0));
 
 }
 
@@ -1549,10 +1642,6 @@ void ZManagerWindow::deviceContextMenu(QPoint p)
 
 }
 
-void ZManagerWindow::filesystemContextMenu(QPoint p)
-{
-    Q_UNUSED(p);
-}
 
 
 vdev_t *ZManagerWindow::getDiskbyName(QString name)
@@ -1848,6 +1937,14 @@ bool ZManagerWindow::deviceAddPartition(vdev_t *device)
 }
 bool ZManagerWindow::deviceDestroyPartition(vdev_t* device)
 {
+
+    QMessageBox msg(QMessageBox::Warning,tr("Warning"),tr("This operation cannot be undone.\nOK to destroy the slice/partition?"),QMessageBox::Yes|QMessageBox::No);
+    int result=msg.exec();
+
+    if(result!=QMessageBox::Yes) return false;
+
+
+
    QString cmdline;
    QString tmp;
    cmdline="gpart delete ";
@@ -1931,6 +2028,39 @@ bool ZManagerWindow::processzpoolErrors(QStringList& output)
 
 }
 
+bool ZManagerWindow::processzfsErrors(QStringList& output)
+{
+    QStringList::const_iterator it=output.constBegin();
+    QString errormsg;
+    bool errorfound=false;
+
+    while(it!=output.constEnd())
+    {
+
+        if(!(*it).isEmpty()) {
+            QString tmp=(*it);
+            errormsg+= tmp + "\n";
+            errorfound=true;
+        }
+        ++it;
+    }
+
+    if(errorfound) {
+        QString msg(tr("An error was detected while executing 'zfs':\n\n"));
+        msg+=errormsg;
+        QMessageBox err(QMessageBox::Warning,tr("Error report"),msg,QMessageBox::Ok,this);
+
+        err.exec();
+
+        return true;
+
+    }
+
+    return false;
+
+}
+
+
 QString ZManagerWindow::getPoolProperty(zpool_t *pool,QString Property)
 {
     zprop_t tmp;
@@ -1938,6 +2068,8 @@ QString ZManagerWindow::getPoolProperty(zpool_t *pool,QString Property)
     foreach(tmp,pool->Properties) {
         if(tmp.Name==Property) return tmp.Value;
     }
+
+    return "";
 
 }
 
@@ -2271,6 +2403,16 @@ void ZManagerWindow::zpoolImport(bool b)
 
     if(result==QDialog::Accepted) {
 
+        if(lastSelectedPool->Status&STATE_DESTROYED) {
+            // SHOW A WARNING
+
+            QMessageBox msg(QMessageBox::Warning,tr("Warning"),tr("This pool had been destroyed, and its disks my have been reused. Attempting to recover will destroy any new data that could've been stored in the devices that were reused and cannot be recovered.\nOK to proceed with recovery?"),QMessageBox::Yes|QMessageBox::No);
+            int result=msg.exec();
+
+            if(result!=QMessageBox::Yes) return;
+
+        }
+
     QString cmdline="zpool import ";
 
     if(dlg.importReadOnly()) cmdline+=" -o readonly=on ";
@@ -2571,6 +2713,652 @@ int printUnits(unsigned long long bytes)
     if(bytes<1*1024*1024*1024) return 2;
     if(bytes<(1LL*1024LL*1024LL*1024LL*1024LL)) return 3;
     return 4;
+}
+
+
+
+void ZManagerWindow::on_dropDownButton_clicked()
+{
+    ui->fspoolList->setMaximumHeight(1<<24);
+    ui->fspoolList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    ui->dropDownButton->setEnabled(false);
+    updateGeometry();
+}
+
+void ZManagerWindow::on_fspoolList_clicked(const QModelIndex &index)
+{
+    Q_UNUSED(index);
+
+    if(ui->fspoolList->maximumHeight()!=ui->fspoolList->minimumHeight()) {
+    ui->fspoolList->setMaximumHeight(ui->fspoolList->minimumHeight());
+    ui->fspoolList->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    updateGeometry();
+    ui->dropDownButton->setEnabled(true);
+    }
+    else on_dropDownButton_clicked();
+
+}
+
+
+zfs_t *ZManagerWindow::getFileSystembyPath(QString path, int index)
+{
+
+    if(index>=0) return (zfs_t *)&(this->FileSystems.at(index));
+
+    QList<zfs_t>::const_iterator it=this->FileSystems.constBegin();
+
+    while(it!=this->FileSystems.constEnd())
+    {
+        if((*it).FullPath==path) {
+            return (zfs_t *)&(*it);
+        }
+        ++it;
+    }
+
+    return NULL;
+
+}
+
+
+QTreeWidgetItem *ZManagerWindow::getParentFileSystem(QString path)
+{
+    QTreeWidgetItemIterator it(ui->fsList);
+    int len=-1;
+    QTreeWidgetItem *ptr=NULL;
+
+    while(*it) {
+        if(path.startsWith((*it)->text(0))) {
+            if((*it)->text(0).length()>len) {
+                len=(*it)->text(0).length();
+                ptr=(*it);
+            }
+        }
+        ++it;
+    }
+
+    if(ptr) return ptr;
+    return NULL;
+}
+
+void ZManagerWindow::on_fspoolList_currentItemChanged(QTreeWidgetItem *current, QTreeWidgetItem *previous)
+{
+    Q_UNUSED(previous);
+
+    ui->fsList->clear();
+    if(current==NULL) return;
+    QString pool=current->text(0);
+    QTreeWidgetItem *item,*parent;
+    zprop_t *prop;
+
+    QList<zfs_t>::const_iterator it=FileSystems.constBegin();
+
+    while(it!=FileSystems.constEnd())
+    {
+
+        if((*it).FullPath.startsWith(pool)) {
+
+            zprop_t *origin=getFileSystemProperty((zfs_t *)&(*it),"origin");
+            if(origin && !origin->Value.isEmpty()) parent=getParentFileSystem(origin->Value);
+            else parent=getParentFileSystem((*it).FullPath);
+            if(parent) item=new QTreeWidgetItem(parent);
+            else item=new QTreeWidgetItem(ui->fsList);
+
+        item->setText(0,(*it).FullPath);
+        if((*it).FullPath==pool) item->setIcon(0,QIcon(":/icons/server-database.png"));
+            else {
+        prop=getFileSystemProperty((zfs_t *)&(*it),"type");
+        if(prop)
+        {
+            if(prop->Value=="filesystem")  item->setIcon(0,QIcon(":/icons/kexi.png"));
+            else if(prop->Value=="snapshot") item->setIcon(0,QIcon(":/icons/camera-photo.png"));
+            else item->setIcon(0,QIcon(":/icons/kdf.png"));
+        }
+        }
+
+        QString state;
+        prop=getFileSystemProperty((zfs_t *)&(*it),"mounted");
+
+        if(prop && prop->Value=="yes")  {
+            state=tr("[Mounted]");
+            prop=getFileSystemProperty((zfs_t *)&(*it),"mountpoint");
+            if(prop) state+=" "+prop->Value;
+        }
+        else state=tr("[Not Mounted]");
+
+        state+="\n";
+
+        prop=getFileSystemProperty((zfs_t *)&(*it),"used");
+
+        if(prop) state+=prop->Value;
+
+        prop=getFileSystemProperty((zfs_t *)&(*it),"available");
+
+        if(prop) state+=tr(" of ")+prop->Value;
+
+
+        item->setText(1,state);
+
+
+
+        // TODO: SHOW OTHER STATE INFO
+        }
+        ++it;
+    }
+
+
+    // NEED TO DO A SECOND PASS DUE TO ITEMS NOT BEING IN PROPER DEPENDENCY ORDER
+
+    it=FileSystems.constBegin();
+
+    while(it!=FileSystems.constEnd())
+    {
+
+        if((*it).FullPath.startsWith(pool)) {
+
+            zprop_t *origin=getFileSystemProperty((zfs_t *)&(*it),"origin");
+            if(origin && !origin->Value.isEmpty()) parent=getParentFileSystem(origin->Value);
+            else parent=NULL;
+            if(parent) {
+                QTreeWidgetItem *item=getParentFileSystem((*it).FullPath);
+                item->parent()->takeChild(item->parent()->indexOfChild(item));
+                parent->addChild(item);
+            }
+        }
+        ++it;
+    }
+
+
+
+
+    ui->fsList->expandAll();
+
+}
+
+
+zprop_t *ZManagerWindow::getFileSystemProperty(zfs_t *fs,QString prop)
+{
+    QList<zprop_t>::iterator it=fs->Properties.begin();
+
+    while(it!=fs->Properties.end())
+    {
+        if((*it).Name==prop) return &(*it);
+        ++it;
+    }
+
+    return NULL;
+}
+
+
+void ZManagerWindow::filesystemContextMenu(QPoint p)
+{
+    Q_UNUSED(p);
+
+    struct zactions zfsmenu[]={
+        /*  QString menutext        ,   int triggermask, triggerflags    ,  action_func slot */
+        { QString(tr("Mount"))       ,    FSITEM_TYPEFS|FSITEM_ISMOUNTED, FSITEM_TYPEFS       ,  SLOT(fsMount(bool)) },
+        { QString(tr("Unmount"))       ,    FSITEM_TYPEFS|FSITEM_ISMOUNTED, FSITEM_TYPEFS|FSITEM_ISMOUNTED       ,  SLOT(fsUnmount(bool)) },
+        { QString(tr("Rename dataset"))    ,     FSITEM_NONE | FSITEM_ISROOTFS, 0         ,  SLOT(fsRename(bool)) },
+        { QString(tr("Create new dataset"))    ,    FSITEM_TYPESNAP|FSITEM_TYPEVOL, 0         ,  SLOT(fsCreate(bool)) },
+        { QString(tr("Create a clone dataset"))       ,    ~(FSITEM_TYPEFS|FSITEM_TYPESNAP|FSITEM_ISROOTFS|FSITEM_ISMOUNTED), 0         ,  SLOT(fsClone(bool)) },
+        { QString(tr("Destroy dataset"))       ,    FSITEM_TYPEFS|FSITEM_NONE|FSITEM_ISROOTFS, FSITEM_TYPEFS         ,  SLOT(fsDestroy(bool)) },
+        { QString(tr("Promote filesystem"))       ,    FSITEM_ALL, FSITEM_TYPEFS|FSITEM_ISCLONE         ,  SLOT(fsPromote(bool)) },
+        { QString(tr("Take a snapshot"))       ,    FSITEM_TYPEFS, FSITEM_TYPEFS         ,  SLOT(fsSnapshot(bool)) },
+        { QString(tr("Destroy snapshot"))       ,    FSITEM_TYPESNAP, FSITEM_TYPESNAP         ,  SLOT(fsDestroy(bool)) },
+        { QString(tr("Rollback to this snapshot"))       ,    FSITEM_ALL, FSITEM_TYPESNAP       ,  SLOT(fsRollback(bool)) },
+        { QString(tr("Edit properties"))       ,    FSITEM_NONE, 0       ,  SLOT(fsEditProps(bool)) },
+
+
+// TODO: ADD MORE COMMANDS HERE
+        { QString()       ,   0, 0      ,  NULL }
+
+    };
+
+    int flags=0;
+    int idx;
+
+    QMenu m(tr("zfs Menu"),this);
+
+    QTreeWidgetItem *item=ui->fsList->itemAt(p);
+
+    if(item!=NULL) {
+        // FIRST DETERMINE THE FILESYSTEM OF THE ITEM
+        qDebug() << item->text(0);
+        flags=0;
+        if( (lastSelectedFileSystem=getFileSystembyPath(item->text(0)) )) {
+            // YES, IT'S A VALID FILESYSTEM
+            flags=getFileSystemFlags(lastSelectedFileSystem);
+        }
+        else {
+            // THIS SHOULD NEVER HAPPEN!
+            return;
+        }
+    } else { flags=FSITEM_NONE; lastSelectedFileSystem=NULL; }
+
+    for(idx=0;zfsmenu[idx].slot!=NULL;++idx)
+    {
+        if( (flags & zfsmenu[idx].triggermask) == zfsmenu[idx].triggerflags) {
+
+            QAction *act=m.addAction(zfsmenu[idx].menutext);
+            connect(act,SIGNAL(triggered(bool)),this,zfsmenu[idx].slot);
+
+        }
+    }
+
+
+    needRefresh=false;
+    m.exec(ui->fsList->viewport()->mapToGlobal(p));
+
+    if(needRefresh) {
+        // REFRESH STATE BUT KEEP THE CURRENT POOL SELECTED
+        QString currentPool=ui->fspoolList->currentItem()->text(0);
+        refreshState();
+
+        QTreeWidgetItemIterator it(ui->fspoolList);
+
+        while(*it) {
+            if((*it)->text(0)==currentPool) { ui->fspoolList->setCurrentItem((*it)); break; }
+            ++it;
+        }
+
+    }
+
+
+}
+
+int ZManagerWindow::getFileSystemFlags(zfs_t *fs)
+{
+    int flags=0;
+    zprop_t *prop;
+
+    if(fs==NULL) return 0;
+
+    if(getZpoolbyName(fs->FullPath)) flags|=FSITEM_ISROOTFS;
+
+    prop=getFileSystemProperty(fs,"origin");
+    if(prop && !prop->Value.isEmpty()) flags|=FSITEM_ISCLONE;
+
+    prop=getFileSystemProperty(fs,"type");
+    if(prop && prop->Value=="filesystem") flags|=FSITEM_TYPEFS;
+    if(prop && prop->Value=="snapshot") flags|=FSITEM_TYPESNAP;
+    if(prop && prop->Value=="volume") flags|=FSITEM_TYPEVOL;
+
+    prop=getFileSystemProperty(fs,"mounted");
+    if(prop && prop->Value=="yes") flags|=FSITEM_ISMOUNTED;
+
+
+    // TODO: ADD MORE CASES HERE
+
+
+    return flags;
+
+}
+
+
+
+void ZManagerWindow::fsCreate(bool b)
+{
+    Q_UNUSED(b);
+
+    DialogfsCreate dlg;
+
+    if(lastSelectedFileSystem) dlg.setRootPath(lastSelectedFileSystem->FullPath+"/",QString());
+    else dlg.setRootPath(ui->fspoolList->currentItem()->text(0)+"/",QString());
+
+    int result=dlg.exec();
+
+    if(result==QDialog::Accepted) {
+            // TODO: DO THE ACTUAL FILESYSTEM CREATION
+
+        QString cmdline="zfs create ";
+
+
+        QStringList optlist=dlg.getOptions();
+
+        QString opt;
+
+        foreach(opt,optlist) {
+            cmdline+="-o "+opt+" ";
+        }
+
+
+        cmdline+=" \""+dlg.getPath()+"\"";
+
+        QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+        if(!processzfsErrors(a)) needRefresh=true;
+
+        }
+        return;
+
+
+}
+
+void ZManagerWindow::fsDestroy(bool b)
+{
+    Q_UNUSED(b);
+
+    if(!lastSelectedFileSystem)  return;
+
+
+    QString cmdline="zfs destroy -n -v -R";
+
+    cmdline+=" \""+lastSelectedFileSystem->FullPath+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    QString msg(tr("This operation cannot be undone and will cause data loss.\n\nYou are about to perform the following operation(s):\n\n"));
+
+    QString str;
+
+    foreach(str,a) {
+        msg+=str.right(str.length()-6)+"\n";
+    }
+
+    msg+=tr("\n\nAre you sure you want to proceed?\n\n");
+
+    QMessageBox err(QMessageBox::Warning,tr("Confirmation"),msg,QMessageBox::Yes | QMessageBox::No,this);
+    err.setDefaultButton(QMessageBox::No);
+
+    int result=err.exec();
+
+    if(result==QMessageBox::Yes) {
+    QString cmdline="zfs destroy -R";
+
+    cmdline+=" \""+lastSelectedFileSystem->FullPath+"\"";
+
+    QStringList b=pcbsd::Utils::runShellCommand(cmdline);
+
+
+    if(!processzfsErrors(b)) needRefresh=true;
+    }
+}
+
+
+
+
+
+void ZManagerWindow::fsSnapshot(bool b)
+{
+    Q_UNUSED(b);
+
+    DialogfsCreate dlg;
+
+    if(lastSelectedFileSystem) dlg.setRootPath(lastSelectedFileSystem->FullPath+"@",QString());
+    else dlg.setRootPath(ui->fspoolList->currentItem()->text(0)+"@",QString());
+
+    dlg.nameOnlyMode();
+    dlg.changeTitle(tr("Take a new snapshot"));
+
+    int result=dlg.exec();
+
+    if(result==QDialog::Accepted) {
+
+        QString cmdline="zfs snapshot ";
+
+        cmdline+=" \""+dlg.getPath()+"\"";
+
+        QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+        if(!processzfsErrors(a)) needRefresh=true;
+
+        }
+        return;
+
+
+
+}
+void ZManagerWindow::fsRename(bool b)
+{
+    Q_UNUSED(b);
+
+    if(!lastSelectedFileSystem) return;
+
+    DialogfsCreate dlg;
+
+    bool isSnapshot=lastSelectedFileSystem->FullPath.contains("@");
+
+    if(isSnapshot) {
+        int pos=lastSelectedFileSystem->FullPath.lastIndexOf(QChar('@'));
+        dlg.setRootPath(lastSelectedFileSystem->FullPath.left(pos+1),lastSelectedFileSystem->FullPath);
+
+    } else {
+        int pos=lastSelectedFileSystem->FullPath.lastIndexOf(QChar('/'));
+        dlg.setRootPath(lastSelectedFileSystem->FullPath.left(pos+1),lastSelectedFileSystem->FullPath);
+    }
+
+
+
+    dlg.nameOnlyMode();
+    dlg.changeTitle(tr("New name"));
+
+    int result=dlg.exec();
+
+    if(result==QDialog::Accepted) {
+
+        QString cmdline="zfs rename ";
+
+        cmdline+=" \""+lastSelectedFileSystem->FullPath+"\"";
+        cmdline+=" \""+dlg.getPath()+"\"";
+
+        QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+        if(!processzfsErrors(a)) needRefresh=true;
+
+        }
+        return;
+
+
+
+}
+void ZManagerWindow::fsPromote(bool b)
+{
+    Q_UNUSED(b);
+
+    if(!lastSelectedFileSystem) return;
+
+    QString cmdline="zfs promote ";
+
+    cmdline+="\""+lastSelectedFileSystem->FullPath+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzfsErrors(a)) needRefresh=true;
+
+}
+void ZManagerWindow::fsClone(bool b)
+{
+    Q_UNUSED(b);
+
+    DialogfsCreate dlg;
+
+    if(!lastSelectedFileSystem) return;
+
+    bool isSnapshot=lastSelectedFileSystem->FullPath.contains("@");
+
+    int pos=lastSelectedFileSystem->FullPath.lastIndexOf(QChar('/'));
+
+    dlg.setRootPath(lastSelectedFileSystem->FullPath.left(pos+1),QString());
+
+    int result=dlg.exec();
+
+    if(result==QDialog::Accepted) {
+            // TODO: DO THE ACTUAL FILESYSTEM CREATION
+
+        QString cmdline="zfs clone ";
+
+
+        QStringList optlist=dlg.getOptions();
+
+        QString opt;
+
+        foreach(opt,optlist) {
+            cmdline+="-o "+opt+" ";
+        }
+
+        if(isSnapshot) cmdline+=" \""+lastSelectedFileSystem->FullPath+"\"";
+        else {
+            // IF THIS ISN'T A SNAPSHOT, WE NEED TO TAKE ONE NOW
+            QString newname=dlg.getPath();
+            QString snapname=lastSelectedFileSystem->FullPath+"@"+newname.right(newname.size()-pos-1)+"_base";
+            QString cmd2="zfs snapshot \""+snapname+"\"";
+            QStringList a=pcbsd::Utils::runShellCommand(cmd2);
+            if(processzfsErrors(a)) return;
+
+            cmdline+=" \""+snapname+"\"";
+        }
+
+        cmdline+=" \""+dlg.getPath()+"\"";
+
+        QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+        if(!processzfsErrors(a)) needRefresh=true;
+
+        }
+        return;
+
+
+
+}
+
+
+
+void ZManagerWindow::fsRollback(bool b)
+{
+    Q_UNUSED(b);
+
+    if(!lastSelectedFileSystem)  return;
+
+
+    QString cmdline="zfs rollback -r -R";
+
+    cmdline+=" \""+lastSelectedFileSystem->FullPath+"\"";
+
+    QString msg(tr("This operation cannot be undone and will cause all data added after the snapshot to be lost.\n"
+                   "Any snapshots created after this one will be deleted, along with any clone filesystems that depend on them.\n"));
+
+    msg+=tr("\n\nAre you sure you want to proceed?\n\n");
+
+    QMessageBox err(QMessageBox::Warning,tr("Confirmation"),msg,QMessageBox::Yes | QMessageBox::No,this);
+    err.setDefaultButton(QMessageBox::No);
+
+    int result=err.exec();
+
+    if(result==QMessageBox::Yes) {
+
+    QStringList b=pcbsd::Utils::runShellCommand(cmdline);
+
+
+    if(!processzfsErrors(b)) needRefresh=true;
+    }
+}
+
+
+void ZManagerWindow::fsMount(bool b)
+{
+    Q_UNUSED(b);
+
+    if(!lastSelectedFileSystem)  return;
+
+
+    QString cmdline="zfs mount";
+
+    cmdline+=" \""+lastSelectedFileSystem->FullPath+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+
+    if(!processzfsErrors(a)) needRefresh=true;
+
+
+}
+
+void ZManagerWindow::fsUnmount(bool b)
+{
+    Q_UNUSED(b);
+    if(!lastSelectedFileSystem)  return;
+
+
+    QString cmdline="zfs unmount";
+
+    cmdline+=" \""+lastSelectedFileSystem->FullPath+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+
+    if(!processzfsErrors(a)) needRefresh=true;
+
+}
+
+
+void ZManagerWindow::fsEditProps(bool)
+{
+    DialogFSProp dlg;
+
+    dlg.setDataset(lastSelectedFileSystem);
+
+    int result=dlg.exec();
+
+    if(result==QDialog::Accepted) {
+        // TODO: UPDATE ALL MODIFIED PROPERTIES
+        QStringList props;
+        QStringList vals;
+        QList<int> flags;
+
+        props=dlg.getAllChangedProps();
+
+        flags=dlg.getAllChangedFlags();
+
+        vals=dlg.getAllChangedValues();
+
+        QStringList::const_iterator itp=props.constBegin(),itv=vals.constBegin();
+        QList<int>::const_iterator itf=flags.constBegin();
+
+        while(itp!=props.constEnd()&&itv!=vals.constEnd() && itf!=flags.constEnd()) {
+            if((*itf)&PROP_INHERIT) inheritFSProperty(lastSelectedFileSystem,(*itp),dlg.applyRecursively());
+            else setFSProperty(lastSelectedFileSystem,(*itp),(*itv));
+
+            ++itp;
+            ++itv;
+            ++itf;
+        }
+
+        needRefresh=true;
+    }
+    return;
+}
+
+
+void    ZManagerWindow::setFSProperty(zfs_t *fs, QString Property, QString Value)
+{
+    QString cmdline="zfs set ";
+
+    cmdline+=Property+"=\""+Value+"\"";
+
+    cmdline+=" \""+fs->FullPath+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzfsErrors(a)) needRefresh=true;
+
+
+}
+
+
+void    ZManagerWindow::inheritFSProperty(zfs_t *fs,QString Property,bool recursive)
+{
+    QString cmdline="zfs inherit ";
+
+    if(recursive) cmdline+=" -r ";
+
+    cmdline+=Property;
+
+    cmdline+=" \""+fs->FullPath+"\"";
+
+    QStringList a=pcbsd::Utils::runShellCommand(cmdline);
+
+    if(!processzfsErrors(a)) needRefresh=true;
+
+
 }
 
 

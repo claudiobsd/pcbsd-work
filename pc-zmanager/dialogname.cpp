@@ -60,6 +60,8 @@ void DialogName::on_nameEdit_textChanged(const QString &arg1)
 
 void DialogName::on_checkAltRoot_stateChanged(int arg1)
 {
+    Q_UNUSED(arg1);
+
     ui->editAltRoot->setEnabled(ui->checkAltRoot->isChecked());
 }
 

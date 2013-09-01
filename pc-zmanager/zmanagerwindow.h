@@ -2,6 +2,8 @@
 #define ZMANAGERWINDOW_H
 
 #include <QMainWindow>
+#include <QModelIndex>
+#include <QTreeWidgetItem>
 
 namespace Ui {
 class ZManagerWindow;
@@ -47,6 +49,8 @@ struct __vdev_t {
 typedef struct {
     QString Name;
     QString Value;
+    int Source;
+    QString From;
 }  zprop_t;
 
 typedef struct {
@@ -58,6 +62,35 @@ typedef struct {
     unsigned long long Size;
     unsigned long long Free;
 } zpool_t;
+
+
+typedef struct {
+    QString FullPath;
+    QList<zprop_t> Properties;
+} zfs_t;
+
+
+#define PROP_READONLY 1
+#define PROP_ISNUMBER 2
+#define PROP_ISOPTION  4
+#define PROP_ISPATH   8
+#define PROP_ISSTRING 16
+#define PROP_CHANGED 32
+#define PROP_CREATE 64
+#define PROP_DELETE 128
+#define PROP_INHERIT 512
+#define PROP_ISUSER  1024
+#define PROP_SRCDEFAULT  2048
+#define PROP_SRCLOCAL    4096
+#define PROP_SRCINHERIT  8192
+
+
+struct zproperty {
+    QString Name;
+    QString Description;
+    QStringList ValidOptions;
+    int Flags;
+};
 
 
 typedef struct {
@@ -89,12 +122,21 @@ typedef struct {
 #define PARENT(a) ((a)<<16)
 
 
+#define ZFS_SRCNONE 0
+#define ZFS_SRCDEFAULT  1
+#define ZFS_SRCLOCAL    2
+#define ZFS_SRCINHERIT  4
 
 
+#define FSITEM_NONE        1
+#define FSITEM_ISROOTFS    2
+#define FSITEM_ISCLONE     4
+#define FSITEM_ISMOUNTED   8
+#define FSITEM_TYPEFS    256
+#define FSITEM_TYPESNAP  512
+#define FSITEM_TYPEVOL  1024
 
-
-
-
+#define FSITEM_ALL      0xffff
 
 class ZManagerWindow : public QMainWindow
 {
@@ -108,9 +150,12 @@ public:
     QList<vdev_t> Disks;
     QList<zpool_t> Pools;
     QList<zerror_t> Errors;
+    QList<zfs_t> FileSystems;
 
     zpool_t *lastSelectedPool;
     vdev_t *lastSelectedVdev;
+    zfs_t *lastSelectedFileSystem;
+
     bool needRefresh;
 
 
@@ -121,10 +166,18 @@ public:
     vdev_t *getContainerDisk(vdev_t *device);
 
     zpool_t *getZpoolbyName(QString name, int index=-1);
+    zfs_t *getFileSystembyPath(QString path, int index=-1);
+    QTreeWidgetItem *getParentFileSystem(QString path);
+    zprop_t *getFileSystemProperty(zfs_t *fs,QString prop);
+    int  getFileSystemFlags(zfs_t *fs);
+
     vdev_t *getVDevbyName(QString name);
     vdev_t *getContainerGroup(vdev_t* device);
     QString getPoolProperty(zpool_t *pool,QString Property);
     void    setPoolProperty(zpool_t *pool,QString Property,QString Value);
+    void    setFSProperty(zfs_t *pool, QString Property, QString Value);
+    void    inheritFSProperty(zfs_t *fs, QString Property, bool recursive);
+
 
     void ProgramInit();
     void GetCurrentTopology();
@@ -145,6 +198,7 @@ public:
 
     bool processErrors(QStringList& output,QString command);
     bool processzpoolErrors(QStringList& output);
+    bool processzfsErrors(QStringList& output);
 
 public slots:
     void slotSingleInstance();
@@ -173,9 +227,25 @@ public slots:
     void zpoolAddSpare(bool b);
 
 
+    void fsCreate(bool b);
+    void fsDestroy(bool b);
+    void fsSnapshot(bool b);
+    void fsRename(bool b);
+    void fsPromote(bool b);
+    void fsClone(bool b);
+    void fsRollback(bool b);
+    void fsMount(bool b);
+    void fsUnmount(bool b);
+    void fsEditProps(bool b);
+
+
+
 
 private slots:
     void on_toolButton_clicked();
+    void on_dropDownButton_clicked();
+    void on_fspoolList_clicked(const QModelIndex &index);
+    void on_fspoolList_currentItemChanged(QTreeWidgetItem *current, QTreeWidgetItem *previous);
 };
 
 
