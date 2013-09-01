@@ -155,6 +155,7 @@ void DialogfsCreate::done(int result)
 
 void DialogfsCreate::setPropsVisible(bool p)
 {
+    Q_UNUSED(p);
     ui->frameProps->setVisible(false);
 }
 
