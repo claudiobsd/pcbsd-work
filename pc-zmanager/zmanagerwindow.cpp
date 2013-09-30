@@ -18,6 +18,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTreeWidgetItemIterator>
+#include <QToolButton>
 
 ZManagerWindow::ZManagerWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -31,14 +32,17 @@ ZManagerWindow::ZManagerWindow(QWidget *parent) :
     ui->setupUi(this);
 
     ui->zpoolList->setIconSize(QSize(48,48));
-    ui->zpoolList->header()->setStretchLastSection(false);
-    ui->zpoolList->header()->setResizeMode(0,QHeaderView::Stretch);
-    ui->zpoolList->header()->setResizeMode(1,QHeaderView::ResizeToContents);
+    ui->zpoolList->header()->setStretchLastSection(true);
+    ui->zpoolList->header()->setResizeMode(0,QHeaderView::Interactive);
+    ui->zpoolList->header()->setResizeMode(1,QHeaderView::Stretch);
+    ui->zpoolList->header()->resizeSection(0,ui->deviceList->width()*2/3);
 
     ui->deviceList->setIconSize(QSize(48,48));
-    ui->deviceList->header()->setStretchLastSection(false);
-    ui->deviceList->header()->setResizeMode(0,QHeaderView::Stretch);
-    ui->deviceList->header()->setResizeMode(1,QHeaderView::ResizeToContents);
+    ui->deviceList->header()->setStretchLastSection(true);
+    ui->deviceList->header()->setResizeMode(0,QHeaderView::Interactive);
+    ui->deviceList->header()->setResizeMode(1,QHeaderView::Stretch);
+    ui->deviceList->header()->resizeSection(0,ui->deviceList->width()*2/3);
+
 
     connect(ui->zpoolList,SIGNAL(customContextMenuRequested(QPoint)),SLOT(zpoolContextMenu(QPoint)));
     connect(ui->deviceList,SIGNAL(customContextMenuRequested(QPoint)),SLOT(deviceContextMenu(QPoint)));
@@ -51,9 +55,11 @@ ZManagerWindow::ZManagerWindow(QWidget *parent) :
     ui->tabZFS->layout()->setAlignment(ui->dropDownButton,Qt::AlignTop);
 
     ui->fsList->setIconSize(QSize(48,48));
-    ui->fsList->header()->setStretchLastSection(false);
-    ui->fsList->header()->setResizeMode(0,QHeaderView::Stretch);
-    ui->fsList->header()->setResizeMode(1,QHeaderView::ResizeToContents);
+    ui->fsList->header()->setStretchLastSection(true);
+    ui->fsList->header()->setResizeMode(0,QHeaderView::Interactive);
+    ui->fsList->header()->setResizeMode(1,QHeaderView::Stretch);
+    ui->fsList->header()->resizeSection(0,ui->deviceList->width()*2/3);
+
 
 }
 
@@ -478,7 +484,13 @@ void ZManagerWindow::GetCurrentTopology()
     idx=m.constBegin();
 
     while(idx!=m.constEnd()) {
+        QString MountString=(*idx);
         QStringList tokens=(*idx).split(" ",QString::SkipEmptyParts);
+        int startpos=MountString.indexOf(" "+tokens.at(2)+" ");
+        int endpos=MountString.lastIndexOf(" (");
+
+        MountString=MountString.mid(startpos+1,endpos-startpos);
+
         if(tokens.count()<3) { ++ idx; continue; }
         // FIND DISK OR PARTITION WITH GIVEN NAME
 
@@ -491,25 +503,25 @@ void ZManagerWindow::GetCurrentTopology()
             while(sliceit!=(*dskit).Partitions.end()) {
                 QList<vdev_t>::Iterator partit=(*sliceit).Partitions.begin();
                 while(partit!=(*sliceit).Partitions.end()) {
-                    if(tokens.at(0)=="/dev/"+(*partit).Name) { (*partit).MountPoint=tokens.at(2); break; }
+                    if(tokens.at(0)=="/dev/"+(*partit).Name) { (*partit).MountPoint=MountString; break; }
                     if(!(*partit).Alias.isEmpty()) {
-                        if(tokens.at(0)=="/dev/"+(*partit).Alias) { (*partit).MountPoint=tokens.at(2); break; }
+                        if(tokens.at(0)=="/dev/"+(*partit).Alias) { (*partit).MountPoint=MountString; break; }
                     }
                     ++partit;
                 }
                     if(partit!=(*sliceit).Partitions.end()) break;
-                    if(tokens.at(0)=="/dev/"+(*sliceit).Name) { (*sliceit).MountPoint=tokens.at(2); break; }
+                    if(tokens.at(0)=="/dev/"+(*sliceit).Name) { (*sliceit).MountPoint=MountString; break; }
                     if(!(*sliceit).Alias.isEmpty()) {
-                        if(tokens.at(0)=="/dev/"+(*sliceit).Alias) { (*sliceit).MountPoint=tokens.at(2); break; }
+                        if(tokens.at(0)=="/dev/"+(*sliceit).Alias) { (*sliceit).MountPoint=MountString; break; }
                     }
                     ++sliceit;
             }
 
             if(sliceit!=(*dskit).Partitions.end()) break;
 
-            if(tokens.at(0)=="/dev/"+(*dskit).Name) { (*dskit).MountPoint=tokens.at(2); break; }
+            if(tokens.at(0)=="/dev/"+(*dskit).Name) { (*dskit).MountPoint=MountString; break; }
             if(!(*dskit).Alias.isEmpty()) {
-                if(tokens.at(0)=="/dev/"+(*dskit).Alias) { (*dskit).MountPoint=tokens.at(2); break; }
+                if(tokens.at(0)=="/dev/"+(*dskit).Alias) { (*dskit).MountPoint=MountString; break; }
             }
 
             ++dskit;
@@ -1221,13 +1233,49 @@ while(fspr!=zfspr.constEnd())
 
 void ZManagerWindow::refreshState()
 {
-    GetCurrentTopology();
+    QToolButton splash;
+    splash.setSizePolicy(QSizePolicy::Fixed,QSizePolicy::Fixed);
+    splash.setMinimumHeight(100);
+    splash.setMinimumWidth(100);
+    splash.setMaximumHeight(100);
+    splash.setMaximumWidth(100);
+
+    splash.setText(tr("Refreshing..."));
+    splash.setIcon(QIcon(":/icons/server-database.png"));
+    splash.setIconSize(QSize(48,48));
+    splash.setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+    splash.setWindowFlags(Qt::SplashScreen);
+
+    int x=this->pos().x();
+    int y=this->pos().y();
+
+    x+=this->width()/2;
+    y+=this->height()/2;
+
+    x-=50;
+    y-=50;
+
+    splash.move(x,y);
+
+    splash.show();
+
+//    ui->zpoolList->header()->setStretchLastSection(false);
+//    ui->zpoolList->header()->setResizeMode(0,QHeaderView::Stretch);
+//    ui->zpoolList->header()->setResizeMode(1,QHeaderView::ResizeToContents);
+
+//    ui->deviceList->header()->setStretchLastSection(false);
+//    ui->deviceList->header()->setResizeMode(0,QHeaderView::Stretch);
+//    ui->deviceList->header()->setResizeMode(1,QHeaderView::ResizeToContents);
+
 
 
     ui->zpoolList->clear();
     ui->deviceList->clear();
     ui->fspoolList->clear();
     ui->fsList->clear();
+
+
+    GetCurrentTopology();
 
 
     // SHOW ERRORS
@@ -1422,6 +1470,31 @@ ui->zpoolList->expandAll();
 ui->deviceList->expandAll();
 if(ui->fspoolList->topLevelItem(0)) ui->fspoolList->setCurrentItem(ui->fspoolList->topLevelItem(0));
 
+
+// CHECK SECTION SIZES FOR ALL LISTS AND ADJUST ACCORDINGLY
+
+/*
+if(ui->deviceList->header()->sectionSize(1)>ui->deviceList->width()/2) {
+    ui->deviceList->header()->setResizeMode(1,QHeaderView::Interactive);
+    ui->deviceList->header()->resizeSection(1,ui->deviceList->width()/3);
+
+}
+else     {
+    ui->deviceList->header()->setResizeMode(1,QHeaderView::Interactive);
+
+}
+*/
+/*
+if(ui->zpoolList->header()->sectionSize(1)>ui->zpoolList->width()/2) {
+    ui->zpoolList->header()->setResizeMode(1,QHeaderView::Interactive);
+    ui->zpoolList->header()->resizeSection(1,ui->zpoolList->width()/3);
+
+}
+else     {
+    ui->zpoolList->header()->setResizeMode(1,QHeaderView::Interactive);
+}
+*/
+
 }
 
 
@@ -1558,6 +1631,8 @@ void ZManagerWindow::deviceContextMenu(QPoint p)
     vdev_t *dev=getDiskbyName(item->text(0).split(" ",QString::SkipEmptyParts).at(0));
 
     if(dev==NULL) return;
+
+    if(dev->Name.startsWith("cd")) return;  // NOTHING TO DO ON A CD/DVD DRIVE
 
     if(!dev->InPool.isEmpty()) {
         // DISK IS IN A POOL, NOTHING TO DO UNTIL IT'S REMOVED
@@ -1868,7 +1943,7 @@ if(result) {
     if(device->Alias.isEmpty())  cmdline += "/dev/"+device->Name;
     else cmdline+="/dev/"+device->Alias;
 
-    cmdline += " " + mnt.getMountLocation();
+    cmdline += " \"" + mnt.getMountLocation()+"\"";
 
     QStringList a=pcbsd::Utils::runShellCommand(cmdline);
 
@@ -2784,6 +2859,14 @@ void ZManagerWindow::on_fspoolList_currentItemChanged(QTreeWidgetItem *current, 
 {
     Q_UNUSED(previous);
 
+
+
+//    ui->fsList->header()->setStretchLastSection(false);
+//    ui->fsList->header()->setResizeMode(0,QHeaderView::Stretch);
+//    ui->fsList->header()->setResizeMode(1,QHeaderView::ResizeToContents);
+
+
+
     ui->fsList->clear();
     if(current==NULL) return;
     QString pool=current->text(0);
@@ -2868,9 +2951,10 @@ void ZManagerWindow::on_fspoolList_currentItemChanged(QTreeWidgetItem *current, 
     }
 
 
-
-
     ui->fsList->expandAll();
+
+
+
 
 }
 
@@ -3360,5 +3444,4 @@ void    ZManagerWindow::inheritFSProperty(zfs_t *fs,QString Property,bool recurs
 
 
 }
-
 

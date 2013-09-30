@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>599</width>
-    <height>503</height>
+    <width>589</width>
+    <height>493</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -269,6 +269,15 @@
           <property name="contextMenuPolicy">
            <enum>Qt::CustomContextMenu</enum>
           </property>
+          <attribute name="headerCascadingSectionResizes">
+           <bool>false</bool>
+          </attribute>
+          <attribute name="headerMinimumSectionSize">
+           <number>100</number>
+          </attribute>
+          <attribute name="headerStretchLastSection">
+           <bool>false</bool>
+          </attribute>
           <column>
            <property name="text">
             <string>Filesystems</string>
@@ -292,7 +301,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>599</width>
+     <width>589</width>
      <height>21</height>
     </rect>
    </property>

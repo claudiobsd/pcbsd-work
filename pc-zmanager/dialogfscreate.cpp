@@ -92,7 +92,7 @@ QStringList DialogfsCreate::getOptions()
     if(ui->checkMountpt->checkState()==Qt::Checked) {
         QString tmp;
         tmp="mountpoint=";
-        if(ui->comboMountpt->currentText()=="[path]") tmp+="\""+ui->mountPtEdit->text();
+        if(ui->comboMountpt->currentText()=="[path]") tmp+="\""+ui->mountPtEdit->text()+"\"";
         else tmp+=ui->comboMountpt->currentText();
         opt.append(tmp);
     }

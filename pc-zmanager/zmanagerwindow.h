@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QModelIndex>
 #include <QTreeWidgetItem>
+#include <QHeaderView>
 
 namespace Ui {
 class ZManagerWindow;
@@ -246,6 +247,8 @@ private slots:
     void on_dropDownButton_clicked();
     void on_fspoolList_clicked(const QModelIndex &index);
     void on_fspoolList_currentItemChanged(QTreeWidgetItem *current, QTreeWidgetItem *previous);
+
+
 };
 
 
